@@ -29,16 +29,15 @@ class XmcConfigLoaderTest {
         Files.writeString(path, """
                 {
                   "enabled": true,
-                  "channel": "xmc:data",
-                  "probeTimeoutMillis": 1200,
-                  "tunnel": { "host": "127.0.0.1", "port": 10086 }
+                  "maxPayloadBytes": 8192,
+                  "tunnel": { "host": "127.0.0.1", "port": 10086, "connectTimeoutMillis": 3000 }
                 }
                 """);
         XmcConfig config = XmcConfigLoader.loadOrCreate(path);
         assertTrue(config.enabled());
         assertEquals(10086, config.tunnel().port());
-        assertEquals(15, config.keepAliveSeconds());
-        assertEquals(1200, config.probeTimeoutMillis());
+        assertEquals(3000, config.tunnel().connectTimeoutMillis());
+        assertEquals(8192, config.maxPayloadBytes());
     }
 
     @Test
@@ -54,12 +53,12 @@ class XmcConfigLoaderTest {
     }
 
     @Test
-    void rejectsImpossibleProbeTimeout() throws Exception {
+    void rejectsImpossiblePayloadSize() throws Exception {
         Path path = directory.resolve("config.json");
         Files.writeString(path, """
                 {
                   "enabled": true,
-                  "probeTimeoutMillis": 10,
+                  "maxPayloadBytes": 100,
                   "tunnel": { "host": "127.0.0.1", "port": 10086 }
                 }
                 """);

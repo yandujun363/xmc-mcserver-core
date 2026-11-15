@@ -3,7 +3,7 @@
 	"id": "xmc-mcserver-core",
 	"version": "${version}",
 	"name": "XMC MC Server Core",
-	"description": "XMC (Minecraft finalmask) server side for Fabric: detects an XMC landing after the vanilla Login Acknowledged packet and relays the xmc:data tunnel to a local Xray instance. Authentication, whitelist and bans stay vanilla.",
+	"description": "XMC (Minecraft finalmask) server side for Fabric: registers the xmc:data configuration channel and relays it to a local Xray instance. Login, authentication, whitelist and bans stay vanilla.",
 	"authors": [
 		"yandujun363"
 	],
@@ -17,9 +17,6 @@
 			"xmc.core.XmcMod"
 		]
 	},
-	"mixins": [
-		"xmc-mcserver-core.mixins.json"
-	],
 	"depends": {
 		"fabricloader": ">=0.20.1",
 		"fabric-api": "*",

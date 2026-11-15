@@ -6,21 +6,23 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Mine
 
 > 协议版本：Minecraft **26.1 = 网络协议 775**。
 >
-> 模组**不参与认证**：登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由
-> vanilla 负责。配置里没有密码、玩家档案、材质或密钥派生。
+> 模组**不参与认证，也不接管连接**：没有 mixin，不改登录分支，不拆 vanilla 的
+> 管线。登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责。
 >
-> Xray 侧需要 **XMC 客户端 Yggdrasil 模式**（#7394 / `feat/xmc-yggdrasil-login`，
-> 尚未合并）。在那之前模组没有可用的上游客户端实现。
+> Xray 侧需要 **原生帧 padding**（`"framePadding": true`）。该模式目前在本仓库
+> 的本地分支里（基于草案 #7416 的 Yggdrasil 登录 + native padding），上游合并前
+> 没有可用的客户端实现。
 
 ## 它做什么
 
 ```
-Xray 客户端（XMC outbound，走真实 Minecraft 登录）
+Xray 客户端（XMC outbound，真实 Minecraft 登录 + 原生帧 padding）
     │  Handshake / Login Start / Encryption / Login Success —— 全是 vanilla 的
     ▼
 Fabric 26.1 服务端（本模组）
-    │  Login Ack 之后判断：对面发的是 Configuration 包还是 XMC padding
-    │  XMC 才接管：padding 伪装 + Configuration 阶段的 xmc:data 通道
+    │  只注册两个 Configuration 状态通道：
+    │    xmc:pad   启动 padding（普通自定义载荷，vanilla 直接丢弃）
+    │    xmc:data  隧道字节流
     ▼
 127.0.0.1:10086 等私有地址
     │  原始 TCP，把收到的字节原样写出
@@ -30,20 +32,23 @@ Fabric 26.1 服务端（本模组）
 
 模组只做三件事：
 
-1. 在 **Login Acknowledged 之后**判断这条连接是不是 XMC（见下）；
-2. 是 XMC：接管连接、跑 39 轮启动/进服 padding；
+1. 注册 `xmc:data` 通道；
+2. 收到第一条 `xmc:data` 时创建会话，把捕获的 s2c 启动 padding 以
+   `xmc:pad` 自定义载荷发出去；
 3. 把 `xmc:data` 载荷拼成字节流，与配置的 Xray 端点做 TCP 双向转发。
 
-它不是 XMC：立刻把连接原样交回 vanilla，普通玩家的登录、配置和进服流程与没有
-模组时完全一致。
+它不是 XMC 的连接：不注册、不发任何东西，玩家走的是和没有模组时完全一样的
+vanilla 路径。
 
-## 为什么不需要标记
+## 为什么不需要"落地判定"
 
-普通客户端的第一个 Configuration 包是完整帧，而 XMC 的 padding 记录把长度字段
-本身算进记录长度（Xray-core `padding.go`），永远比合法 MC 帧少 header 字节。
-所以 vanilla 的帧解码器要么立即产出一个帧（普通玩家 → 交回 vanilla），要么在
-`probeTimeoutMillis` 内什么都产不出来（XMC → 接管）。判定完全由协议形状决定：
-不加字节、不看地址、不看用户名。
+Xray 的 padding **就是合法的 Minecraft 帧**：每一轮都是 Configuration 状态的
+custom payload 包（`xmc:pad`），长度字段按原生语义。vanilla 的 splitter 能正常
+解析，`ServerCommonPacketListenerImpl#handleCustomPayload` 对未知 channel 是空
+实现，所以服务端什么都不用做。
+
+因此模组不需要在 Login Ack 处探测协议形状、不需要拆 Netty 管线，也不需要
+"XMC / 普通玩家"分类：普通玩家看不到 `xmc:data`，XMC 客户端自己会发。
 
 ## 前置条件
 
@@ -53,107 +58,64 @@ Fabric 26.1 服务端（本模组）
 | `network-compression-threshold` | `-1` | Xray 客户端读不了 `ClientboundLoginCompressionPacket` |
 
 两者都是服务端设置，模组不会替你改；不满足时启动日志会打 warning。
+`enforce-secure-profile=false` 也是实际测试需要的（Xray 客户端没有聊天签名密钥）。
+
+## 安全边界
+
+模组不实现白名单：**任何能登录进来的玩家**都可以发 `xmc:data` 打开隧道。
+需要限制时请使用 vanilla 的 `white-list`、封禁和权限。模组不会创建玩家实体，
+XMC 连接不进 Play，也不占 online 计数。
+
+## 配置
+
+`config/xmc-mcserver-core.json`：
+
+```json
+{
+  "enabled": true,
+  "maxPayloadBytes": 24576,
+  "tunnel": {
+    "host": "127.0.0.1",
+    "port": 10086,
+    "connectTimeoutMillis": 5000
+  }
+}
+```
+
+- `tunnel.host` 必须是私有/回环/链路本地/CGNAT/ULA 地址，加载时和连接时都会校验；
+- `maxPayloadBytes` 是单个 `xmc:data` 载荷的上限（1024–32767）；
+- 文件不存在时会写入一个 `enabled: false` 的示例。
 
 ## 目录结构
 
 ```
-lib/      与 Minecraft / Netty 交互：Login Ack 探测、连接接管、裸字节流
+lib/      与 Minecraft / Fabric 交互：通道注册、载荷类型、收发桥接
 config/   配置模型、JSON 加载与校验、私有地址限制
-core/     padding preset、xmc:data 包流、隧道转发会话
-src/      fabric.mod.json、mixin 配置、单元测试
+core/     padding preset、会话与隧道转发
+src/      fabric.mod.json、单元测试、开发者探针
 ```
 
-依赖方向：`core -> lib`、`core -> config`。`lib` 只在启动时由 `core` 通过
-`XmcLoginHooks` 注入实现，反向不依赖 `core`。
+依赖方向：`core -> lib`、`core -> config`。
 
-## 构建
-
-需要 JDK 25+（Gradle 9.8；本机 JDK 27 已验证）：
+## 构建与测试
 
 ```bash
 ./gradlew build
-# 产物：build/libs/xmc-mcserver-core-<version>.jar
+# 产物：build/libs/xmc-mcserver-core-0.1.0.jar
+./gradlew test        # 单元测试：padding 分帧、配置校验
 ```
 
-单元测试覆盖 VarInt/帧、padding 读写和配置校验：
+开发者探针（需要一个正在运行的开发服务器）：
 
 ```bash
-./gradlew test
+./gradlew runServer    # 离线模式即可
+./gradlew probe        # 原生帧 padding + xmc:data 双向转发
+./gradlew probeVanilla # 普通客户端必须能一路走到 Play 阶段
 ```
 
-## 配置
+## 已知限制
 
-首次启动会在 `config/xmc-mcserver-core.json` 写入一份 `enabled: false` 的示例；
-确认参数后再改成 `true`。完整字段：
-
-| 字段 | 默认 | 说明 |
-| --- | --- | --- |
-| `enabled` | `false` | 是否启用 XMC 落地识别与隧道 |
-| `channel` | `xmc:data` | 隧道载荷 channel（Xray 当前写死 `xmc:data`） |
-| `keepAliveSeconds` | `15` | 服务端发送 Configuration keep-alive 的间隔 |
-| `maxPayloadBytes` | `24576` | 单个 `xmc:data` 载荷上限，需 ≤ Xray 的 24 KiB |
-| `handshakeTimeoutSeconds` | `120` | padding 阶段超时 |
-| `probeTimeoutMillis` | `800` | Login Ack 之后等第一个 Configuration 帧的时间；超时视为 XMC |
-| `tunnel.host` | `127.0.0.1` | 本机 Xray 地址，**只允许私有/回环/链路本地/CGNAT 地址** |
-| `tunnel.port` | — | 本机 Xray VLESS inbound 端口 |
-| `tunnel.connectTimeoutMillis` | `5000` | TCP 连接超时 |
-
-示例见仓库根目录的 `config.example.json`。
-
-Xray 侧需要一个 VLESS inbound（TCP、无 TLS），只监听私有地址：
-
-```json
-{
-  "inbounds": [{
-    "listen": "127.0.0.1",
-    "port": 10086,
-    "protocol": "vless",
-    "settings": {
-      "clients": [{ "id": "<uuid>", "flow": "" }],
-      "decryption": "none"
-    },
-    "streamSettings": { "network": "tcp", "security": "none" }
-  }]
-}
-```
-
-Xray 客户端配置 XMC outbound 时用 Yggdrasil 模式（`yggdrasil` 段），不带
-`password` / `profiles`：玩家身份由 vanilla 的 session server 验证。
-
-## 兼容性与限制
-
-- **仅 26.1 / 协议 775**。
-- 模组只在 Login Ack 之后介入；之前的 hello / 密钥交换 / hasJoined / Login
-  Success 全部是 vanilla 的，模组不改密钥、不碰 verify token。
-- XMC 连接停在 Configuration 阶段（Xray 客户端不会回 `FinishConfigurationAck`），
-  不创建玩家实体，也不占 online 计数。
-- 不支持预共享密码模式（上游已标记为 legacy）；不支持 BungeeCord / Velocity 的
-  登录转发。
-- padding 目前不是合法的 MC 帧（长度字段含自身），所以必须在 Login Ack 之后
-  接管帧解码器；如果上游把 padding 改成合法 MC 包，这层接管可以进一步删掉。
-- 私有的 `tunnel` 地址限制用于避免模组被当成公网 TCP 出口。
-
-## 开发者集成测试
-
-仓库里带一个只用于开发调试的客户端探针（`src/test/java/xmc/probe/XmcProbe.java`），
-开发服务器在 `run/` 下（`online-mode=false`、`network-compression-threshold=-1`，
-探针不需要认证）：
-
-```bash
-# 1. 启动开发服务器
-./gradlew runServer
-# 2. 另一个终端跑探针
-./gradlew probe          # XMC：Login Ack + padding + xmc:data 双向转发
-./gradlew probeVanilla   # 普通客户端：必须走到 Play 阶段
-```
-
-`probe` 会在 127.0.0.1:10086 起一个占位 TCP 服务，模拟“本机 Xray”，验证两个方向
-的字节转发。
-
-## 与 Xray 上游的关系
-
-- padding 数据与协议帧来自 Xray-core `transport/internet/finalmask/xmc`；
-  `padding_preset.go` 改动时请同步 `core/java/xmc/core/padding/PaddingPreset26.java`。
-- 客户端侧依赖 #7394 / `feat/xmc-yggdrasil-login` 的 Yggdrasil 登录。
-- 等上游把 padding 改成合法 MC 帧后，可以去掉 Login Ack 处的接管，只保留
-  `xmc:data` 通道。
+- 只支持 26.1（协议 775）的预设 padding 数据；
+- 客户端不发 `SelectKnownPacks`，所以 vanilla 的 Registry 同步任务会一直挂着，
+  连接停在 Configuration 状态（keep-alive 由 vanilla 维持，客户端照常回）；
+- 不支持 BungeeCord / Velocity 的登录转发。

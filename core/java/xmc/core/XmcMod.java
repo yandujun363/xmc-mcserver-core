@@ -9,17 +9,18 @@ import org.slf4j.LoggerFactory;
 import xmc.config.XmcConfig;
 import xmc.config.XmcConfigLoader;
 import xmc.core.session.XmcRuntime;
-import xmc.lib.XmcLoginHooks;
+import xmc.lib.net.XmcNetworking;
 
 import java.nio.file.Path;
 
 /**
- * Mod entrypoint: loads the configuration on server start and installs the
- * landing handler that the mixins call into.
+ * Mod entrypoint.
  *
- * <p>Login, encryption, authentication and the player list stay vanilla; this
- * mod only turns a connection into an XMC tunnel once the connection itself
- * starts the XMC padding schedule instead of the configuration phase.
+ * <p>The mod registers two configuration-state channels and nothing else: no
+ * mixin, no login interception, no authentication. Vanilla still owns the whole
+ * login and the configuration phase; a connection that starts sending
+ * {@code xmc:data} is turned into a tunnel, everything else keeps its vanilla
+ * path byte for byte.
  */
 public final class XmcMod implements ModInitializer {
     public static final String MOD_ID = "xmc-mcserver-core";
@@ -29,7 +30,11 @@ public final class XmcMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        XmcNetworking.register();
         ServerLifecycleEvents.SERVER_STARTING.register(XmcMod::start);
+        // Properties (online-mode, compression) are only applied after
+        // SERVER_STARTING, so the settings check waits for SERVER_STARTED.
+        ServerLifecycleEvents.SERVER_STARTED.register(XmcMod::warnAboutServerSettings);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> stop());
         LOGGER.info("XMC MC server core initialized");
     }
@@ -39,25 +44,21 @@ public final class XmcMod implements ModInitializer {
         try {
             XmcConfig config = XmcConfigLoader.loadOrCreate(configPath);
             if (!config.enabled()) {
-                XmcLoginHooks.uninstall();
+                XmcNetworking.uninstall();
                 runtime = null;
                 LOGGER.info("XMC is disabled (config: {})", configPath);
                 return;
             }
 
-            warnAboutServerSettings(server);
-
             XmcRuntime created = XmcRuntime.create(config);
-            XmcLoginHooks.install(created);
+            XmcNetworking.install(created);
             runtime = created;
 
-            LOGGER.info("XMC enabled: channel={}, tunnel={}:{}, probeTimeout={}ms",
-                    config.channel(),
+            LOGGER.info("XMC enabled: channel=xmc:data, tunnel={}:{}",
                     config.tunnel().host(),
-                    config.tunnel().port(),
-                    config.probeTimeoutMillis());
+                    config.tunnel().port());
         } catch (Exception failure) {
-            XmcLoginHooks.uninstall();
+            XmcNetworking.uninstall();
             runtime = null;
             LOGGER.error("XMC configuration failed; XMC stays disabled (config: {})", configPath, failure);
         }
@@ -83,10 +84,9 @@ public final class XmcMod implements ModInitializer {
     private static void stop() {
         XmcRuntime current = runtime;
         runtime = null;
+        XmcNetworking.uninstall();
         if (current != null) {
             current.shutdown();
-        } else {
-            XmcLoginHooks.uninstall();
         }
     }
 }

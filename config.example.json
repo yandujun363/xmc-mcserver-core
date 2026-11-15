@@ -1,10 +1,6 @@
 {
   "enabled": false,
-  "channel": "xmc:data",
-  "keepAliveSeconds": 15,
   "maxPayloadBytes": 24576,
-  "handshakeTimeoutSeconds": 120,
-  "probeTimeoutMillis": 800,
   "tunnel": {
     "host": "127.0.0.1",
     "port": 10086,

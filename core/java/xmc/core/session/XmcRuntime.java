@@ -1,23 +1,23 @@
 package xmc.core.session;
 
+import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import xmc.config.XmcConfig;
 import xmc.core.XmcMod;
-import xmc.lib.XmcLoginHooks;
-import xmc.lib.net.RawConnection;
-import xmc.lib.spi.XmcLoginHandler;
+import xmc.lib.net.XmcChannelHandler;
 
-import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * XMC core: owns the loaded configuration and tracks the active tunnels.
  *
- * <p>It takes no part in authentication: the player was already verified by
- * vanilla before the session starts.
+ * <p>It takes no part in authentication: by the time a payload arrives vanilla
+ * has already finished the login. A session is created lazily on the first
+ * {@code xmc:data} payload, so an ordinary player never allocates one.
  */
-public final class XmcRuntime implements XmcLoginHandler {
+public final class XmcRuntime implements XmcChannelHandler {
     private final XmcConfig config;
-    private final Set<XmcSession> sessions = ConcurrentHashMap.newKeySet();
+    private final Map<ServerConfigurationPacketListenerImpl, XmcSession> sessions = new ConcurrentHashMap<>();
 
     private XmcRuntime(XmcConfig config) {
         this.config = config;
@@ -32,25 +32,32 @@ public final class XmcRuntime implements XmcLoginHandler {
     }
 
     @Override
-    public boolean enabled() {
-        return config.enabled();
+    public void onData(ServerConfigurationPacketListenerImpl listener, byte[] data) {
+        XmcSession session = sessions.get(listener);
+        if (session == null) {
+            String playerName = listener.getOwner().name();
+            XmcSession created = new XmcSession(listener, config, playerName,
+                    closed -> sessions.remove(listener, closed));
+            session = sessions.putIfAbsent(listener, created);
+            if (session == null) {
+                session = created;
+                XmcMod.LOGGER.info("XMC landing detected for {}", playerName);
+                session.start();
+            }
+        }
+        session.offer(data);
     }
 
     @Override
-    public long probeTimeoutMillis() {
-        return config.probeTimeoutMillis();
-    }
-
-    @Override
-    public void startSession(RawConnection connection, String playerName) {
-        XmcSession session = new XmcSession(connection, config, playerName, sessions::remove);
-        sessions.add(session);
-        XmcMod.LOGGER.info("XMC tunnel established for {} ({})", playerName, connection.remoteAddress());
-        session.start();
+    public void onDisconnect(ServerConfigurationPacketListenerImpl listener) {
+        XmcSession session = sessions.remove(listener);
+        if (session != null) {
+            session.close();
+        }
     }
 
     public void closeAll() {
-        for (XmcSession session : sessions) {
+        for (XmcSession session : sessions.values()) {
             session.close();
         }
         sessions.clear();
@@ -58,6 +65,5 @@ public final class XmcRuntime implements XmcLoginHandler {
 
     public void shutdown() {
         closeAll();
-        XmcLoginHooks.uninstall();
     }
 }

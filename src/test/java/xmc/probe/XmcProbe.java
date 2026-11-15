@@ -1,6 +1,6 @@
 package xmc.probe;
 
-import xmc.core.padding.PaddingCodec;
+import xmc.core.padding.PaddingFrames;
 import xmc.core.padding.PaddingPreset26;
 import xmc.core.padding.PaddingTurn;
 import xmc.core.protocol.FrameCodec;
@@ -100,29 +100,48 @@ public final class XmcProbe {
             Random random = new Random(42);
             for (int i = 0; i < turns.size(); i++) {
                 PaddingTurn turn = turns.get(i);
-                if (turn.direction() == PaddingTurn.Direction.CLIENT_TO_SERVER) {
-                    clientWritePadding(out, turn, i == 0 ? 2 : 0, random);
-                } else {
-                    PaddingCodec.readTurn(in, turn, i == 0 ? 2 : 0);
+                if (turn.direction() != PaddingTurn.Direction.CLIENT_TO_SERVER) {
+                    // Native padding: the server's turns are ordinary custom
+                    // payloads that the client simply does not read.
+                    continue;
                 }
+                PaddingFrames.writeTurn(data -> {
+                    try {
+                        writePacket(out, CONFIGURATION_SERVERBOUND_CUSTOM_PAYLOAD, "xmc:pad", data);
+                    } catch (Exception e) {
+                        throw new IllegalStateException(e);
+                    }
+                }, turn, i == 0 ? 2 : 0, Thread::sleep, random);
             }
+            out.flush();
             System.out.println("[probe] padding complete; relaying through xmc:data");
 
             sendCustomPayload(out, "xmc:data", "HELLO-XMC");
-            long deadline = System.currentTimeMillis() + 15000;
+            long deadline = System.currentTimeMillis() + 30000;
             while (System.currentTimeMillis() < deadline) {
                 FrameCodec.Frame frame = FrameCodec.read(in, 1 << 20);
                 ByteArrayInputStream body = new ByteArrayInputStream(frame.body());
                 int id = VarInts.read(body);
-                if (!isCustomPayload(id)) {
-                    System.out.println("[probe] skipped packet id " + id);
+                if (id == CONFIGURATION_CLIENTBOUND_KEEP_ALIVE) {
+                    long aliveId = readLong(body);
+                    ByteArrayOutputStream answer = new ByteArrayOutputStream();
+                    VarInts.write(answer, CONFIGURATION_SERVERBOUND_KEEP_ALIVE);
+                    writeLong(answer, aliveId);
+                    FrameCodec.write(out, answer.toByteArray());
+                    continue;
+                }
+                if (id != CONFIGURATION_CLIENTBOUND_CUSTOM_PAYLOAD) {
                     continue;
                 }
                 String channel = readString(body);
+                if (!"xmc:data".equals(channel)) {
+                    // xmc:pad: the startup padding is ordinary traffic.
+                    continue;
+                }
                 byte[] data = body.readAllBytes();
                 System.out.println("[probe] tunnel payload: channel=" + channel + " data="
                         + new String(data, StandardCharsets.UTF_8));
-                if (!"xmc:data".equals(channel) || !new String(data, StandardCharsets.UTF_8).equals("HELLO-BACK")) {
+                if (!new String(data, StandardCharsets.UTF_8).equals("HELLO-BACK")) {
                     throw new IllegalStateException("unexpected tunnel payload");
                 }
                 break;
@@ -248,19 +267,13 @@ public final class XmcProbe {
         FrameCodec.write(out, body.toByteArray());
     }
 
-    private static void clientWritePadding(DataOutputStream out, PaddingTurn turn, int prefix, Random random)
+    private static void writePacket(OutputStream out, int packetId, String channel, byte[] data)
             throws Exception {
-        int target;
-        if (!turn.variants().isEmpty()) {
-            target = turn.variants().get(random.nextInt(turn.variants().size())).totalLength();
-        } else {
-            target = turn.minLength() + random.nextInt(turn.maxLength() - turn.minLength() + 1);
-        }
-        int recordLength = target - prefix;
-        VarInts.write(out, recordLength);
-        int headerLength = VarInts.size(recordLength);
-        out.write(new byte[recordLength - headerLength]);
-        out.flush();
+        ByteArrayOutputStream body = new ByteArrayOutputStream(data.length + 16);
+        VarInts.write(body, packetId);
+        writeString(body, channel);
+        body.write(data);
+        FrameCodec.write(out, body.toByteArray());
     }
 
     private static void writeString(OutputStream out, String value) throws Exception {

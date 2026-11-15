@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Locale;
 
 /**
  * Loads {@code config/xmc-mcserver-core.json}. When the file does not exist a
@@ -21,11 +20,7 @@ public final class XmcConfigLoader {
     private static final String DEFAULT_JSON = """
             {
               "enabled": false,
-              "channel": "xmc:data",
-              "keepAliveSeconds": 15,
               "maxPayloadBytes": 24576,
-              "handshakeTimeoutSeconds": 120,
-              "probeTimeoutMillis": 800,
               "tunnel": {
                 "host": "127.0.0.1",
                 "port": 10086,
@@ -65,12 +60,7 @@ public final class XmcConfigLoader {
 
     private static XmcConfig parse(JsonObject root) {
         boolean enabled = bool(root, "enabled", false);
-        String channel = string(root, "channel", XmcConfig.DEFAULT_CHANNEL).toLowerCase(Locale.ROOT);
-        int keepAliveSeconds = integer(root, "keepAliveSeconds", XmcConfig.DEFAULT_KEEP_ALIVE_SECONDS);
         int maxPayloadBytes = integer(root, "maxPayloadBytes", XmcConfig.DEFAULT_MAX_PAYLOAD_BYTES);
-        int handshakeTimeoutSeconds = integer(root, "handshakeTimeoutSeconds",
-                XmcConfig.DEFAULT_HANDSHAKE_TIMEOUT_SECONDS);
-        int probeTimeoutMillis = integer(root, "probeTimeoutMillis", XmcConfig.DEFAULT_PROBE_TIMEOUT_MILLIS);
 
         JsonObject tunnelObject = root.has("tunnel") && root.get("tunnel").isJsonObject()
                 ? root.getAsJsonObject("tunnel")
@@ -80,8 +70,7 @@ public final class XmcConfigLoader {
                 integer(tunnelObject, "port", 0),
                 integer(tunnelObject, "connectTimeoutMillis", 5000));
 
-        return new XmcConfig(enabled, channel, keepAliveSeconds, maxPayloadBytes,
-                handshakeTimeoutSeconds, probeTimeoutMillis, tunnel);
+        return new XmcConfig(enabled, maxPayloadBytes, tunnel);
     }
 
     private static boolean bool(JsonObject object, String key, boolean fallback) {

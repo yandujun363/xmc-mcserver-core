@@ -1,237 +1,92 @@
 package xmc.core.session;
 
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
 import xmc.config.XmcConfig;
 import xmc.core.XmcMod;
-import xmc.core.padding.PaddingCodec;
+import xmc.core.padding.PaddingFrames;
 import xmc.core.padding.PaddingPreset26;
 import xmc.core.padding.PaddingTurn;
-import xmc.core.protocol.FrameCodec;
-import xmc.core.protocol.VarInts;
-import xmc.lib.net.RawConnection;
+import xmc.lib.net.XmcNetworking;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
-import java.net.SocketTimeoutException;
-import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * Server side of one XMC tunnel:
+ * One XMC tunnel on the server side.
+ *
+ * <p>The connection already finished a vanilla login and is parked in the
+ * configuration state, so this class never sees or writes any login packet. It
+ * only:
  *
  * <ol>
- *   <li>run the captured startup/play-join padding schedule (the Login
- *       Acknowledged packet itself was already consumed by vanilla),</li>
- *   <li>connect to the local Xray VLESS inbound and relay opaque bytes.</li>
+ *   <li>sends the captured server-to-client startup padding, framed as ordinary
+ *       {@code xmc:pad} custom payloads,</li>
+ *   <li>connects to the local Xray VLESS inbound,</li>
+ *   <li>relays opaque bytes in both directions through {@code xmc:data}.</li>
  * </ol>
  *
- * The relay never parses VLESS; it only splits the byte stream into
- * {@code xmc:data} configuration payload packets (and answers keep-alives).
+ * <p>The client's own padding arrives as {@code xmc:pad} payloads and is dropped
+ * by vanilla before it reaches the mod, so it is never read here.
  */
-public final class XmcSession implements Runnable {
-    /** Wire length of the vanilla Login Acknowledged packet: VarInt(1) + packet id. */
-    private static final int LOGIN_ACKNOWLEDGED_WIRE_LENGTH = 2;
-    private static final int CONFIGURATION_CLIENTBOUND_CUSTOM_PAYLOAD = 0x01;
-    private static final int CONFIGURATION_SERVERBOUND_CUSTOM_PAYLOAD = 0x02;
-    private static final int CONFIGURATION_KEEP_ALIVE = 0x04;
-    private static final int MAX_RAW_FRAME = (1 << 21) - 1;
+public final class XmcSession {
+    private static final int MAX_PENDING_PAYLOADS = 256;
     private static final int SOCKET_BUFFER = 16 * 1024;
-    private static final ScheduledExecutorService WATCHDOG = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "xmc-watchdog");
-        thread.setDaemon(true);
-        return thread;
-    });
 
-    private final RawConnection connection;
+    private final ServerConfigurationPacketListenerImpl listener;
     private final XmcConfig config;
     private final String playerName;
     private final Consumer<XmcSession> onClose;
     private final Random random = new Random();
-    private final AtomicBoolean stopped = new AtomicBoolean();
-    private final PaddingCodec.Sleeper sleeper = Thread::sleep;
+    private final BlockingQueue<byte[]> inbound = new LinkedBlockingQueue<>();
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final PaddingFrames.Sleeper sleeper = Thread::sleep;
 
     private volatile Socket tunnel;
-    private volatile boolean paddingDone;
-    private long keepAliveId;
 
-    public XmcSession(RawConnection connection, XmcConfig config, String playerName,
-                      Consumer<XmcSession> onClose) {
-        this.connection = connection;
+    public XmcSession(ServerConfigurationPacketListenerImpl listener,
+                      XmcConfig config, String playerName, Consumer<XmcSession> onClose) {
+        this.listener = listener;
         this.config = config;
         this.playerName = playerName;
         this.onClose = onClose;
     }
 
     public void start() {
-        Thread thread = new Thread(this, "xmc-session " + connection.remoteAddress());
+        Thread thread = new Thread(this::run, "xmc-session " + playerName);
         thread.setDaemon(true);
         thread.start();
     }
 
+    /** Called on the server thread for every {@code xmc:data} payload. */
+    public void offer(byte[] data) {
+        if (closed.get()) {
+            return;
+        }
+        if (inbound.size() >= MAX_PENDING_PAYLOADS) {
+            XmcMod.LOGGER.warn("XMC session {}: tunnel is not draining, closing", playerName);
+            close();
+            return;
+        }
+        inbound.add(data);
+    }
+
     public void close() {
-        stop();
-    }
-
-    @Override
-    public void run() {
-        try {
-            DataInputStream in = new DataInputStream(new BufferedInputStream(connection.inputStream(), SOCKET_BUFFER));
-            DataOutputStream out = new DataOutputStream(connection.outputStream());
-            ScheduledFuture<?> handshakeTimeout = WATCHDOG.schedule(() -> {
-                if (!paddingDone) {
-                    XmcMod.LOGGER.debug("XMC session {} timed out during handshake", connection.remoteAddress());
-                    connection.close();
-                }
-            }, config.handshakeTimeoutSeconds(), TimeUnit.SECONDS);
-            try {
-                runPadding(in, out);
-            } finally {
-                handshakeTimeout.cancel(false);
-            }
-            paddingDone = true;
-            Socket socket = TunnelConnector.connect(config.tunnel());
-            tunnel = socket;
-            runTunnel(in, out, socket);
-        } catch (Throwable failure) {
-            if (!stopped.get()) {
-                if (failure instanceof IOException) {
-                    XmcMod.LOGGER.debug("XMC session {} closed: {}", connection.remoteAddress(), failure.toString());
-                } else {
-                    XmcMod.LOGGER.warn("XMC session {} failed", connection.remoteAddress(), failure);
-                }
-            }
-        } finally {
-            closeQuietly(tunnel);
-            connection.close();
-            onClose.accept(this);
-        }
-    }
-
-    private void runPadding(DataInputStream in, DataOutputStream out)
-            throws IOException, InterruptedException {
-        List<PaddingTurn> schedule = PaddingPreset26.serverSchedule(random);
-        for (int index = 0; index < schedule.size(); index++) {
-            PaddingTurn turn = schedule.get(index);
-            // The first client padding turn counts the 2 wire bytes of the Login
-            // Acknowledged packet as its prefix, exactly like Xray-core.
-            int prefixLength = index == 0 ? LOGIN_ACKNOWLEDGED_WIRE_LENGTH : 0;
-            if (turn.sendsFromServer()) {
-                PaddingCodec.writeTurn(out, turn, prefixLength, sleeper, random);
-            } else {
-                PaddingCodec.readTurn(in, turn, prefixLength);
-            }
-        }
-        out.flush();
-        XmcMod.LOGGER.debug("XMC session {} padding complete ({} turns)", connection.remoteAddress(), schedule.size());
-    }
-
-    private void runTunnel(DataInputStream in, DataOutputStream out, Socket socket) throws IOException {
-        socket.setSoTimeout(Math.max(1000, config.keepAliveSeconds() * 1000));
-        InputStream socketIn = new BufferedInputStream(socket.getInputStream(), SOCKET_BUFFER);
-        OutputStream socketOut = new BufferedOutputStream(socket.getOutputStream(), SOCKET_BUFFER);
-
-        Thread writer = new Thread(() -> writerLoop(socketIn, out), "xmc-writer " + connection.remoteAddress());
-        writer.setDaemon(true);
-        writer.start();
-
-        try {
-            while (!stopped.get()) {
-                FrameCodec.Frame frame = FrameCodec.read(in, MAX_RAW_FRAME);
-                handleClientFrame(frame.body(), socketOut);
-            }
-        } finally {
-            stop();
-            writer.interrupt();
-        }
-    }
-
-    private void writerLoop(InputStream socketIn, DataOutputStream out) {
-        byte[] buffer = new byte[Math.min(config.maxPayloadBytes(), SOCKET_BUFFER)];
-        try {
-            while (!stopped.get()) {
-                int read;
-                try {
-                    read = socketIn.read(buffer);
-                } catch (SocketTimeoutException timeout) {
-                    writeKeepAlive(out);
-                    continue;
-                }
-                if (read < 0) {
-                    return;
-                }
-                for (int offset = 0; offset < read; offset += config.maxPayloadBytes()) {
-                    int count = Math.min(read - offset, config.maxPayloadBytes());
-                    writeCustomPayload(out, buffer, offset, count);
-                }
-            }
-        } catch (IOException failure) {
-            XmcMod.LOGGER.warn("XMC tunnel writer {} ended: {}", connection.remoteAddress(), failure.toString());
-        } finally {
-            stop();
-        }
-    }
-
-    private void handleClientFrame(byte[] body, OutputStream socketOut) throws IOException {
-        ByteArrayInputStream input = new ByteArrayInputStream(body);
-        int packetId = VarInts.read(input);
-        if (packetId == CONFIGURATION_KEEP_ALIVE) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
-        if (packetId != CONFIGURATION_SERVERBOUND_CUSTOM_PAYLOAD) {
-            return;
-        }
-        String channel = readString(input, 32_767);
-        if (!config.channel().equals(channel)) {
-            return;
-        }
-        byte[] payload = input.readAllBytes();
-        if (payload.length == 0) {
-            return;
-        }
-        socketOut.write(payload);
-        socketOut.flush();
-    }
-
-    private void writeCustomPayload(DataOutputStream out, byte[] bytes, int offset, int length) throws IOException {
-        ByteArrayOutputStream body = new ByteArrayOutputStream(length + 16);
-        VarInts.write(body, CONFIGURATION_CLIENTBOUND_CUSTOM_PAYLOAD);
-        writeString(body, config.channel());
-        body.write(bytes, offset, length);
-        FrameCodec.write(out, body.toByteArray());
-    }
-
-    private void writeKeepAlive(DataOutputStream out) throws IOException {
-        ByteArrayOutputStream body = new ByteArrayOutputStream(9);
-        VarInts.write(body, CONFIGURATION_KEEP_ALIVE);
-        long id = ++keepAliveId;
-        for (int shift = 56; shift >= 0; shift -= 8) {
-            body.write((int) (id >>> shift) & 0xFF);
-        }
-        FrameCodec.write(out, body.toByteArray());
-    }
-
-    private void stop() {
-        if (stopped.compareAndSet(false, true)) {
-            closeQuietly(tunnel);
-            connection.close();
-        }
-    }
-
-    private static void closeQuietly(Socket socket) {
+        Socket socket = tunnel;
         if (socket != null) {
             try {
                 socket.close();
@@ -239,28 +94,105 @@ public final class XmcSession implements Runnable {
                 // best effort
             }
         }
+        try {
+            onClose.accept(this);
+        } catch (RuntimeException failure) {
+            XmcMod.LOGGER.warn("XMC session {}: close callback failed", playerName, failure);
+        }
+        if (listener.isAcceptingMessages()) {
+            listener.disconnect(Component.literal("XMC tunnel closed"));
+        }
     }
 
-    private static String readString(InputStream in, int maximumBytes) throws IOException {
-        int length = VarInts.read(in);
-        if (length < 0 || length > maximumBytes) {
-            throw new IOException("invalid string length: " + length);
+    private void run() {
+        try {
+            sendStartupPadding();
+            Socket socket = TunnelConnector.connect(config.tunnel());
+            tunnel = socket;
+            if (closed.get()) {
+                socket.close();
+                return;
+            }
+            XmcMod.LOGGER.info("XMC tunnel established for {}", playerName);
+            startTunnelReader(socket);
+            forwardInbound(socket);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable failure) {
+            if (!closed.get()) {
+                XmcMod.LOGGER.warn("XMC session {} failed", playerName, failure);
+            }
+        } finally {
+            close();
         }
-        byte[] bytes = in.readNBytes(length);
-        if (bytes.length != length) {
-            throw new IOException("truncated string");
-        }
-        return new String(bytes, StandardCharsets.UTF_8);
     }
 
-    private static void writeString(OutputStream out, String value) throws IOException {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        VarInts.write(out, bytes.length);
-        out.write(bytes);
+    private void sendStartupPadding() throws InterruptedException {
+        List<PaddingTurn> schedule = PaddingPreset26.serverSchedule(random);
+        for (PaddingTurn turn : schedule) {
+            if (!turn.sendsFromServer()) {
+                // Client-to-server turns are ordinary Minecraft traffic handled by
+                // vanilla; the mod must not consume them.
+                continue;
+            }
+            PaddingFrames.writeTurn(this::sendPadding, turn, 0, sleeper, random);
+        }
+    }
+
+    private void sendPadding(byte[] data) {
+        if (!XmcNetworking.sendPadding(listener, data)) {
+            throw new IllegalStateException("configuration listener stopped accepting messages");
+        }
+    }
+
+    private void startTunnelReader(Socket socket) {
+        Thread reader = new Thread(() -> readTunnel(socket), "xmc-reader " + playerName);
+        reader.setDaemon(true);
+        reader.start();
+    }
+
+    private void readTunnel(Socket socket) {
+        byte[] buffer = new byte[Math.min(config.maxPayloadBytes(), SOCKET_BUFFER)];
+        try {
+            InputStream in = socket.getInputStream();
+            while (!closed.get()) {
+                int read = in.read(buffer);
+                if (read < 0) {
+                    return;
+                }
+                for (int offset = 0; offset < read; offset += config.maxPayloadBytes()) {
+                    int count = Math.min(read - offset, config.maxPayloadBytes());
+                    byte[] chunk = Arrays.copyOfRange(buffer, offset, offset + count);
+                    if (!XmcNetworking.sendData(listener, chunk)) {
+                        return;
+                    }
+                }
+            }
+        } catch (IOException failure) {
+            if (!closed.get()) {
+                XmcMod.LOGGER.debug("XMC tunnel reader {} ended: {}", playerName, failure.toString());
+            }
+        } finally {
+            close();
+        }
+    }
+
+    private void forwardInbound(Socket socket) throws IOException, InterruptedException {
+        OutputStream out = new BufferedOutputStream(socket.getOutputStream(), SOCKET_BUFFER);
+        while (!closed.get()) {
+            byte[] data = inbound.poll(500, TimeUnit.MILLISECONDS);
+            if (data == null) {
+                continue;
+            }
+            out.write(data);
+            if (inbound.isEmpty()) {
+                out.flush();
+            }
+        }
     }
 
     @Override
     public String toString() {
-        return "XmcSession[" + playerName + " @ " + connection.remoteAddress() + "]";
+        return "XmcSession[" + playerName + "]";
     }
 }
