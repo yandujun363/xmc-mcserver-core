@@ -5,7 +5,7 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组实现：让一个真实�
 XMC 隧道里的原始字节流转发给本机负责分流的 Xray（VLESS，TCP，无加密）。
 
 > 协议版本：Minecraft **26.1 = 网络协议 775**（`minecraft-data` 与 Xray-core
-> 的 XMC 实现都硬编码 775）。755 是 1.17，和 26.1 不是一回事。
+> 的 XMC 实现都硬编码 775）。
 >
 > 兼容目标：Xray-core 当前主线（#6769 合并后）的 XMC 预共享密码模式。
 > #7394 的 Yggdrasil 登录尚未合并，等它合入后再做多版本/新登录方式。
