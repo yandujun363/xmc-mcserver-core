@@ -1,18 +1,10 @@
 {
   "enabled": false,
-  "password": "REPLACE_WITH_THE_SAME_PASSWORD_AS_XRAY",
   "channel": "xmc:data",
   "keepAliveSeconds": 15,
   "maxPayloadBytes": 24576,
   "handshakeTimeoutSeconds": 120,
-  "profiles": [
-    {
-      "username": "Dream",
-      "uuid": "00000000-0000-0000-0000-000000000000",
-      "texturesValue": "REPLACE_WITH_SIGNED_TEXTURES_VALUE",
-      "texturesSignature": "REPLACE_WITH_SIGNED_TEXTURES_SIGNATURE"
-    }
-  ],
+  "probeTimeoutMillis": 800,
   "tunnel": {
     "host": "127.0.0.1",
     "port": 10086,

@@ -2,39 +2,29 @@ package xmc.core.session;
 
 import xmc.config.XmcConfig;
 import xmc.core.XmcMod;
-import xmc.core.protocol.RsaKeyDeriver;
 import xmc.lib.XmcLoginHooks;
-import xmc.lib.model.McProfile;
 import xmc.lib.net.RawConnection;
-import xmc.lib.spi.LoginDecision;
 import xmc.lib.spi.XmcLoginHandler;
 
-import java.security.GeneralSecurityException;
-import java.security.KeyPair;
-import java.security.MessageDigest;
-import java.util.Arrays;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * XMC core: owns the derived key pair, authorizes logins and tracks sessions.
+ * XMC core: owns the loaded configuration and tracks the active tunnels.
+ *
+ * <p>It takes no part in authentication: the player was already verified by
+ * vanilla before the session starts.
  */
 public final class XmcRuntime implements XmcLoginHandler {
     private final XmcConfig config;
-    private final KeyPair keyPair;
-    private final byte[] passwordBytes;
     private final Set<XmcSession> sessions = ConcurrentHashMap.newKeySet();
 
-    private XmcRuntime(XmcConfig config, KeyPair keyPair) {
+    private XmcRuntime(XmcConfig config) {
         this.config = config;
-        this.keyPair = keyPair;
-        this.passwordBytes = config.passwordBytes();
     }
 
-    public static XmcRuntime create(XmcConfig config) throws GeneralSecurityException {
-        KeyPair keyPair = config.enabled() ? RsaKeyDeriver.derive(config.password()) : null;
-        return new XmcRuntime(config, keyPair);
+    public static XmcRuntime create(XmcConfig config) {
+        return new XmcRuntime(config);
     }
 
     public XmcConfig config() {
@@ -43,33 +33,19 @@ public final class XmcRuntime implements XmcLoginHandler {
 
     @Override
     public boolean enabled() {
-        return config.enabled() && keyPair != null;
+        return config.enabled();
     }
 
     @Override
-    public KeyPair keyPair() {
-        return keyPair;
+    public long probeTimeoutMillis() {
+        return config.probeTimeoutMillis();
     }
 
     @Override
-    public LoginDecision decide(String username, UUID profileId, byte[] verifyToken, byte[] challenge) {
-        if (username == null || profileId == null) {
-            return new LoginDecision.Reject(LoginDecision.RejectReason.NOT_WHITELISTED);
-        }
-        byte[] password = Arrays.copyOfRange(verifyToken, challenge.length, verifyToken.length);
-        if (!MessageDigest.isEqual(password, passwordBytes)) {
-            return new LoginDecision.Reject(LoginDecision.RejectReason.AUTH_SERVERS_DOWN);
-        }
-        return config.findProfile(username, profileId)
-                .<LoginDecision>map(LoginDecision.Accept::new)
-                .orElseGet(() -> new LoginDecision.Reject(LoginDecision.RejectReason.NOT_WHITELISTED));
-    }
-
-    @Override
-    public void startSession(RawConnection connection, McProfile profile) {
-        XmcSession session = new XmcSession(connection, config, profile, sessions::remove);
+    public void startSession(RawConnection connection, String playerName) {
+        XmcSession session = new XmcSession(connection, config, playerName, sessions::remove);
         sessions.add(session);
-        XmcMod.LOGGER.info("XMC tunnel established for {} ({})", profile.username(), connection.remoteAddress());
+        XmcMod.LOGGER.info("XMC tunnel established for {} ({})", playerName, connection.remoteAddress());
         session.start();
     }
 

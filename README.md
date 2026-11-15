@@ -1,24 +1,26 @@
 # xmc-mcserver-core
 
-XMC（Minecraft finalmask）服务端的 Fabric 模组实现：让一个真实的 Minecraft
-26.1 服务端在 **25565 同一端口**上同时服务普通玩家和 Xray XMC 客户端，并把
-XMC 隧道里的原始字节流转发给本机负责分流的 Xray（VLESS，TCP，无加密）。
+XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Minecraft 26.1
+服务端在 **25565 同一端口**上同时服务普通玩家和 Xray XMC 客户端，并把 XMC 隧道
+里的原始字节流转发给本机负责分流的 Xray（VLESS，TCP，无加密）。
 
-> 协议版本：Minecraft **26.1 = 网络协议 775**（`minecraft-data` 与 Xray-core
-> 的 XMC 实现都硬编码 775）。
+> 协议版本：Minecraft **26.1 = 网络协议 775**。
 >
-> 兼容目标：Xray-core 当前主线（#6769 合并后）的 XMC 预共享密码模式。
-> #7394 的 Yggdrasil 登录尚未合并，等它合入后再做多版本/新登录方式。
+> 模组**不参与认证**：登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由
+> vanilla 负责。配置里没有密码、玩家档案、材质或密钥派生。
+>
+> Xray 侧需要 **XMC 客户端 Yggdrasil 模式**（#7394 / `feat/xmc-yggdrasil-login`，
+> 尚未合并）。在那之前模组没有可用的上游客户端实现。
 
 ## 它做什么
 
 ```
-Xray 客户端 (XMC outbound)
-    │  Minecraft 登录 + 配置阶段隧道（协议 775）
+Xray 客户端（XMC outbound，走真实 Minecraft 登录）
+    │  Handshake / Login Start / Encryption / Login Success —— 全是 vanilla 的
     ▼
 Fabric 26.1 服务端（本模组）
-    │  登录阶段识别 XMC，Configuration 前接管连接
-    │  padding 伪装 + xmc:data 自定义载荷
+    │  Login Ack 之后判断：对面发的是 Configuration 包还是 XMC padding
+    │  XMC 才接管：padding 伪装 + Configuration 阶段的 xmc:data 通道
     ▼
 127.0.0.1:10086 等私有地址
     │  原始 TCP，把收到的字节原样写出
@@ -26,37 +28,54 @@ Fabric 26.1 服务端（本模组）
 本机 Xray（VLESS inbound，decryption=none）→ 分流 → 互联网
 ```
 
-模组本身**不解析 VLESS**，只做三件事：
+模组只做三件事：
 
-1. 在登录阶段识别 XMC 客户端（verify token 尾部带预共享密码）；
-2. 完成 XMC 的登录握手、Login Acknowledged 和 40 轮启动/进服 padding；
+1. 在 **Login Acknowledged 之后**判断这条连接是不是 XMC（见下）；
+2. 是 XMC：接管连接、跑 39 轮启动/进服 padding；
 3. 把 `xmc:data` 载荷拼成字节流，与配置的 Xray 端点做 TCP 双向转发。
 
-普通 Minecraft 玩家的登录流程保持不变（online-mode 和 offline-mode 都兼容）。
+它不是 XMC：立刻把连接原样交回 vanilla，普通玩家的登录、配置和进服流程与没有
+模组时完全一致。
+
+## 为什么不需要标记
+
+普通客户端的第一个 Configuration 包是完整帧，而 XMC 的 padding 记录把长度字段
+本身算进记录长度（Xray-core `padding.go`），永远比合法 MC 帧少 header 字节。
+所以 vanilla 的帧解码器要么立即产出一个帧（普通玩家 → 交回 vanilla），要么在
+`probeTimeoutMillis` 内什么都产不出来（XMC → 接管）。判定完全由协议形状决定：
+不加字节、不看地址、不看用户名。
+
+## 前置条件
+
+| 项目 | 取值 | 原因 |
+| --- | --- | --- |
+| `online-mode` | `true` | XMC 客户端要走 vanilla 的加密请求和 session join；离线模式没有加密请求 |
+| `network-compression-threshold` | `-1` | Xray 客户端读不了 `ClientboundLoginCompressionPacket` |
+
+两者都是服务端设置，模组不会替你改；不满足时启动日志会打 warning。
 
 ## 目录结构
 
 ```
-lib/      与 Minecraft / Netty 内部交互：Mixin、accessor、连接接管、登录成功包
+lib/      与 Minecraft / Netty 交互：Login Ack 探测、连接接管、裸字节流
 config/   配置模型、JSON 加载与校验、私有地址限制
-core/     XMC 协议：VarInt/帧、RSA 派生、padding、xmc:data 包流、转发会话
+core/     padding preset、xmc:data 包流、隧道转发会话
 src/      fabric.mod.json、mixin 配置、单元测试
 ```
 
-依赖方向：`core -> lib`、`core -> config`，`config -> lib`（共享 `McProfile`）。
-`lib` 只在启动时由 `core` 通过 `XmcLoginHooks` 注入实现，反向不依赖 `core`。
+依赖方向：`core -> lib`、`core -> config`。`lib` 只在启动时由 `core` 通过
+`XmcLoginHooks` 注入实现，反向不依赖 `core`。
 
 ## 构建
 
-需要 JDK 25+（Gradle 使用 9.8；本机 JDK 27 已验证）：
+需要 JDK 25+（Gradle 9.8；本机 JDK 27 已验证）：
 
 ```bash
 ./gradlew build
 # 产物：build/libs/xmc-mcserver-core-<version>.jar
 ```
 
-单元测试包含与 Go 版 `xmc.DeriveRSAKey` 的逐字节对比、VarInt/帧、
-padding 读写和配置校验：
+单元测试覆盖 VarInt/帧、padding 读写和配置校验：
 
 ```bash
 ./gradlew test
@@ -69,19 +88,17 @@ padding 读写和配置校验：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `enabled` | `false` | 是否启用 XMC 接管 |
-| `password` | — | 与 Xray XMC 客户端一致的预共享密码，同时用于派生 1024-bit RSA 密钥 |
-| `channel` | `xmc:data` | 隧道使用的自定义载荷 channel（Xray 当前写死 `xmc:data`，后续 PR 可控） |
+| `enabled` | `false` | 是否启用 XMC 落地识别与隧道 |
+| `channel` | `xmc:data` | 隧道载荷 channel（Xray 当前写死 `xmc:data`） |
 | `keepAliveSeconds` | `15` | 服务端发送 Configuration keep-alive 的间隔 |
 | `maxPayloadBytes` | `24576` | 单个 `xmc:data` 载荷上限，需 ≤ Xray 的 24 KiB |
-| `handshakeTimeoutSeconds` | `120` | 握手阶段超时（当前由连接读超时兜底） |
-| `profiles` | — | 允许登录的档案，必须和 Xray 客户端配置**完全一致**（用户名、UUID、材质值、材质签名） |
-| `tunnel.host` | `127.0.0.1` | 本机 Xray 的地址，**只允许私有/回环/链路本地/CGNAT 地址** |
+| `handshakeTimeoutSeconds` | `120` | padding 阶段超时 |
+| `probeTimeoutMillis` | `800` | Login Ack 之后等第一个 Configuration 帧的时间；超时视为 XMC |
+| `tunnel.host` | `127.0.0.1` | 本机 Xray 地址，**只允许私有/回环/链路本地/CGNAT 地址** |
 | `tunnel.port` | — | 本机 Xray VLESS inbound 端口 |
 | `tunnel.connectTimeoutMillis` | `5000` | TCP 连接超时 |
 
-示例见仓库根目录的 `config.example.json`。注意：示例里的内网地址/密码/材质
-都是占位符，公开仓库不要提交真实值。
+示例见仓库根目录的 `config.example.json`。
 
 Xray 侧需要一个 VLESS inbound（TCP、无 TLS），只监听私有地址：
 
@@ -100,44 +117,43 @@ Xray 侧需要一个 VLESS inbound（TCP、无 TLS），只监听私有地址：
 }
 ```
 
-Xray 客户端的 XMC outbound 需要与模组配置一致：`password`、相同的
-`profiles`（用户名/UUID/材质值/材质签名），`hostname` 填真实连接地址即可。
+Xray 客户端配置 XMC outbound 时用 Yggdrasil 模式（`yggdrasil` 段），不带
+`password` / `profiles`：玩家身份由 vanilla 的 session server 验证。
 
 ## 兼容性与限制
 
-- **仅 26.1 / 协议 775**。Xray 的 XMC 客户端当前也写死 775。
-- 只实现了**当前主线**的预共享密码认证；#7394 的 Yggdrasil 登录合并后再补。
-- 走的是 XMC 的 Minecraft 登录 + Configuration 阶段；服务端不会进入真实
-  Configuration/Play 阶段，XMC 连接不会创建玩家实体。
-- **不支持 BungeeCord / Velocity 的登录转发**：模组会强制发起加密请求，
-  代理转发场景需要另做兼容。
-- 私有的 `tunnel` 地址限制用于避免模组被当成公网 TCP 出口；如果 Xray 和
-  MC 服务端不在同一台机器，请用内网地址并确保防火墙只放行必要流量。
-- XMC 连接使用 1024-bit RSA + AES/CFB8，与 Xray 实现一致；密码和档案列表
-  是唯一凭据，请使用足够随机的密码。
+- **仅 26.1 / 协议 775**。
+- 模组只在 Login Ack 之后介入；之前的 hello / 密钥交换 / hasJoined / Login
+  Success 全部是 vanilla 的，模组不改密钥、不碰 verify token。
+- XMC 连接停在 Configuration 阶段（Xray 客户端不会回 `FinishConfigurationAck`），
+  不创建玩家实体，也不占 online 计数。
+- 不支持预共享密码模式（上游已标记为 legacy）；不支持 BungeeCord / Velocity 的
+  登录转发。
+- padding 目前不是合法的 MC 帧（长度字段含自身），所以必须在 Login Ack 之后
+  接管帧解码器；如果上游把 padding 改成合法 MC 包，这层接管可以进一步删掉。
+- 私有的 `tunnel` 地址限制用于避免模组被当成公网 TCP 出口。
 
 ## 开发者集成测试
 
-仓库里带一个只用于开发调试的客户端探针
-（`src/test/java/xmc/probe/XmcProbe.java`），它直接实现 XMC 客户端协议：
+仓库里带一个只用于开发调试的客户端探针（`src/test/java/xmc/probe/XmcProbe.java`），
+开发服务器在 `run/` 下（`online-mode=false`、`network-compression-threshold=-1`，
+探针不需要认证）：
 
 ```bash
-# 1. 在 run/config/xmc-mcserver-core.json 启用 XMC（可用 run/ 下的开发服务器）
-# 2. 启动开发服务器
+# 1. 启动开发服务器
 ./gradlew runServer
-# 3. 另一个终端跑探针
-./gradlew probe          # 完整 XMC 登录 + padding + xmc:data 双向转发
-./gradlew probeVanilla   # 普通离线模式客户端，验证强制加密后仍能进入 Configuration
+# 2. 另一个终端跑探针
+./gradlew probe          # XMC：Login Ack + padding + xmc:data 双向转发
+./gradlew probeVanilla   # 普通客户端：必须走到 Play 阶段
 ```
 
-`probe` 会在 127.0.0.1:10086 起一个占位 TCP 服务，模拟“本机 Xray”，用来验证
-两个方向的字节转发。探针不实现压缩，开发服务器建议设置
-`network-compression-threshold=-1`。
+`probe` 会在 127.0.0.1:10086 起一个占位 TCP 服务，模拟“本机 Xray”，验证两个方向
+的字节转发。
 
 ## 与 Xray 上游的关系
 
-- 协议、padding 数据、RSA 派生均来自 Xray-core
-  `transport/internet/finalmask/xmc`（#6769 合并后的主线）。
-- padding 数据由 `padding_preset.go` 生成，改动时请同步
-  `core/java/xmc/core/padding/PaddingPreset26.java`。
-- 等 #7394 的 Yggdrasil 方案合并后，再评估新增登录模式和协议版本适配。
+- padding 数据与协议帧来自 Xray-core `transport/internet/finalmask/xmc`；
+  `padding_preset.go` 改动时请同步 `core/java/xmc/core/padding/PaddingPreset26.java`。
+- 客户端侧依赖 #7394 / `feat/xmc-yggdrasil-login` 的 Yggdrasil 登录。
+- 等上游把 padding 改成合法 MC 帧后，可以去掉 Login Ack 处的接管，只保留
+  `xmc:data` 通道。

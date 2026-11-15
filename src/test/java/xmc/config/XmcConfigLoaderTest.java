@@ -29,24 +29,16 @@ class XmcConfigLoaderTest {
         Files.writeString(path, """
                 {
                   "enabled": true,
-                  "password": "13f462cb64c72770",
                   "channel": "xmc:data",
-                  "profiles": [
-                    {
-                      "username": "Dream",
-                      "uuid": "00000000-0000-0000-0000-000000000001",
-                      "texturesValue": "dGV4dHVyZQ==",
-                      "texturesSignature": "c2lnbmF0dXJl"
-                    }
-                  ],
+                  "probeTimeoutMillis": 1200,
                   "tunnel": { "host": "127.0.0.1", "port": 10086 }
                 }
                 """);
         XmcConfig config = XmcConfigLoader.loadOrCreate(path);
         assertTrue(config.enabled());
-        assertEquals(1, config.profiles().size());
         assertEquals(10086, config.tunnel().port());
         assertEquals(15, config.keepAliveSeconds());
+        assertEquals(1200, config.probeTimeoutMillis());
     }
 
     @Test
@@ -55,16 +47,20 @@ class XmcConfigLoaderTest {
         Files.writeString(path, """
                 {
                   "enabled": true,
-                  "password": "pw",
-                  "profiles": [
-                    {
-                      "username": "Dream",
-                      "uuid": "00000000-0000-0000-0000-000000000001",
-                      "texturesValue": "v",
-                      "texturesSignature": "s"
-                    }
-                  ],
                   "tunnel": { "host": "1.1.1.1", "port": 10086 }
+                }
+                """);
+        assertThrows(IllegalArgumentException.class, () -> XmcConfigLoader.loadOrCreate(path));
+    }
+
+    @Test
+    void rejectsImpossibleProbeTimeout() throws Exception {
+        Path path = directory.resolve("config.json");
+        Files.writeString(path, """
+                {
+                  "enabled": true,
+                  "probeTimeoutMillis": 10,
+                  "tunnel": { "host": "127.0.0.1", "port": 10086 }
                 }
                 """);
         assertThrows(IllegalArgumentException.class, () -> XmcConfigLoader.loadOrCreate(path));

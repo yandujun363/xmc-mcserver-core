@@ -1,38 +1,25 @@
 package xmc.lib.spi;
 
-import xmc.lib.model.McProfile;
 import xmc.lib.net.RawConnection;
-
-import java.security.KeyPair;
-import java.util.UUID;
 
 /**
  * Implemented by the XMC core and installed through {@code XmcLoginHooks}.
  *
- * <p>All methods except {@link #startSession} are called on the Netty event
- * loop and must not block.
+ * <p>Everything before the login acknowledgement (encryption, authentication,
+ * whitelist, Login Success) is done by vanilla; the core only decides how long
+ * to wait for the first configuration-phase bytes and then runs the tunnel.
  */
 public interface XmcLoginHandler {
-    /** Whether XMC login interception is active for this server run. */
+    /** Whether XMC landing detection and the tunnel are active for this server run. */
     boolean enabled();
 
     /**
-     * RSA key pair derived from the configured password. The server replaces its
-     * own key pair with this one so that both XMC and vanilla clients can
-     * negotiate encryption against the same key.
+     * How long the landing probe waits for the first configuration-phase frame.
+     * An XMC client never produces one, because its padding records are not valid
+     * Minecraft frames, so the wait is what separates the two flows.
      */
-    KeyPair keyPair();
-
-    /**
-     * Inspects the decrypted verify token of a login key exchange.
-     *
-     * @param username    the login-start username
-     * @param profileId   the login-start UUID
-     * @param verifyToken the decrypted token, including the challenge prefix
-     * @param challenge   the server challenge that was sent in the encryption request
-     */
-    LoginDecision decide(String username, UUID profileId, byte[] verifyToken, byte[] challenge);
+    long probeTimeoutMillis();
 
     /** Starts the XMC session on a dedicated thread after the connection was taken over. */
-    void startSession(RawConnection connection, McProfile profile);
+    void startSession(RawConnection connection, String playerName);
 }

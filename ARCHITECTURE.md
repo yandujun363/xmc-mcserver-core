@@ -1,97 +1,105 @@
 # 架构说明
 
-## 连接时序（协议 775）
+## 边界
 
-客户端与 Xray 的 XMC 实现保持一致：
+模组只做三件事：识别 XMC 落地、跑 padding、把 `xmc:data` 转发给本机 Xray。
+
+登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责；模组不参与
+任何认证决策，配置里没有密码、玩家档案或密钥派生。
+
+## 连接时序（协议 775）
 
 ```
 C -> S  Handshake        id 0x00  protocol=775, address, port, nextState=2
 C -> S  Login Start      id 0x00  username, uuid
-S -> C  Encryption Req   id 0x01  serverId="", publicKey(派生), verifyToken(4B), shouldAuthenticate=true
-C -> S  Encryption Resp  id 0x01  encrypted(secret), encrypted(verifyToken || password)
-        * 双方开启 AES/CFB8
-S -> C  Login Success    id 0x02  uuid, username, properties(textures)
+S -> C  Encryption Req   id 0x01  vanilla 自己的 RSA 公钥
+C -> S  Encryption Resp  id 0x01  encrypted(secret), encrypted(verifyToken)
+        * AES/CFB8；在线模式下 vanilla 通过 session server 的 hasJoined 校验
+S -> C  Login Success    id 0x02  uuid, username, properties
 C -> S  Login Ack        id 0x03  (无字段)
-        * 服务端开始 padding：默认 preset 6 轮启动 + 33 轮进服
-        * 之后进入 Configuration 阶段的自定义载荷隧道：
+        * ← 模组只在这里做一次判定
+        * XMC：39 轮 padding，之后是 Configuration 阶段的自定义载荷隧道
 C -> S  xmc:data         id 0x02  channel + payload
 S -> C  xmc:data         id 0x01  channel + payload
 S -> C  Keep Alive       id 0x04  long id
 C -> S  Keep Alive       id 0x04  long id（回显）
 ```
 
-padding 的帧长度、chunk 边界和时序来自 Xray-core 的
-`padding_preset.go`，通过 `xmc.core.padding.PaddingPreset26` 逐字节移植。
-服务端在 20 组抓包 profile 中随机选择一组来设置每个 server→client turn 的
-发送长度范围；客户端按 min/max 校验，因此两边可以互通。
+普通玩家在 Login Ack 之后发送自己的第一个 Configuration 包（`ClientInformation`），
+照常进入 Configuration → Play，模组不改变任何字节。
 
-## 登录接管
+## 落地判定（不加标记）
 
-`lib` 中的 Mixin 只做三件事：
+`lib/net/LoginAckProbe` 挂在 vanilla 帧解码器之后（`splitter` 和 `flow` 之间）：
 
-1. `MinecraftServer#getKeyPair` 返回由密码派生的 RSA 密钥对。这样 vanilla
-   客户端和 XMC 客户端都会用同一把服务端公钥做密钥协商，XMC 客户端对公钥的
-   固定校验才能通过。
-2. `ServerLoginPacketListenerImpl#handleHello` 中的
-   `usesAuthentication()` 被重定向为 `true`（XMC 启用时）。offline-mode 服务端
-   也会发送加密请求；普通客户端照常响应。
-3. `handleKey` 在 vanilla 处理前解密 verify token：
-   - 只有 4 字节 challenge：普通客户端。online-mode 交回 vanilla；offline-mode
-     由模组完成离线登录（`startClientVerification`）。
-   - challenge + 密码：XMC。校验密码和档案后开启 AES、发送 Login Success，
-     把连接从登录包管线切换为原始帧管线，并交给 `core` 的会话线程。
-   - 其他：交回 vanilla 报错。
+1. vanilla 解码 Login Ack 后，mixin 在 `handleLoginAcknowledgement` HEAD 取消
+   vanilla 的处理，并装上探测器；
+2. 探测器只做一件事：等帧解码器产出一个帧。
+   - 普通客户端的第一个 Configuration 包是完整帧 → 立即交回 vanilla（调用原方法
+     后转发缓冲字节），零延迟、零改动；
+   - XMC 的 padding 记录把长度字段本身算进记录长度（见 Xray-core `padding.go`），
+     所以永远比一个合法 MC 帧少 header 字节，帧解码器不可能产出帧；
+3. 超时（`probeTimeoutMillis`）后：拆掉帧解码器、取出它缓冲的 padding 首段，
+   交给接管逻辑；如果缓冲为空（对端在 Ack 之后什么都没发），仍然交回 vanilla。
 
-接管点选在 `handleKey`：此时客户端还没收到 Login Success，不会在同一个 TCP
-段里提前发送 Login Ack/padding，避免了登录解码器把 padding 当成登录包解码。
+判定完全由协议形状决定：不加字节、不看地址、不看用户名，普通玩家走的路径和没有
+模组时一致。
 
-## 管线切换
+## 接管
 
-`MinecraftLoginSupport#takeOver`：
+`lib/mc/MinecraftLoginSupport#takeOver`：
 
 ```
-... decrypt -> splitter -> flow -> decoder -> encrypt -> [xmc_raw] -> prepender -> encoder -> packet_handler
+... decrypt -> splitter -> [xmc_probe] -> flow -> decoder -> prepender -> encoder -> packet_handler
 ```
 
-- 在 `prepender` 前插入 `xmc_raw`（位于 `encrypt` 之后，写出的字节会经过加密）；
-- 移除 `decoder`：`ByteToMessageDecoder` 的残留会交给紧随其后的 `xmc_raw`；
-- 移除 `legacy_query`，避免 padding 首字节恰好是 0xFE 时被旧版 ping 逻辑截获；
-- 把 `packetListener` 换成空实现，登录监听器的 600 tick slow-login 不再触发。
+- 在 `prepender` 前插入 `xmc_raw`（位于 encrypt 之后，写出的字节会经过加密）；
+- 移除 `splitter`，以及 26.1 里可能是 `decoder` 或 `inbound_config` 的包解码器，
+  还有 `FlowControlHandler` 和 `legacy_query`；
+- 若服务端开启了压缩，摘掉 `compress` / `decompress` 并告警（XMC 客户端不接受
+  压缩，见"前置条件"）；
+- 把 `packetListener` 换成空实现，登录监听器不再 tick。
 
-`splitter` 保留，因此 `xmc_raw` 收到的是**去掉 VarInt 长度的帧体**。
-`RawConnection` 的 `InputStream` 重新拼回 `VarInt(length) || body`，就得到
-和 Xray 完全一致的无格式字节流；`OutputStream` 通过 `xmc_raw` 的 context 写出，
-只经过 `encrypt`，不会经过 packet encoder/prepender。
+`RawConnection` 把解密后的字节暴露成阻塞流；`feed()` 用来把探测器已经取出的
+padding 首段放到流的最前面。`XmcSession` 因此从 padding 的第一轮开始读。
 
 ## 会话与转发
 
 `XmcSession` 在线程中：
 
-1. 读 Login Ack（帧体必须恰好是 `{0x03}`，wire length 必须为 2）；
-2. 按 preset 执行 39 轮 padding（6 轮启动 + 33 轮进服；server 写 19 轮、读 20 轮，first turn 带 2 字节前缀）；
-3. 通过 `TunnelConnector` 连接 `tunnel.host:port`，连接前再次校验地址为私有地址；
-4. 启动写线程读取 Xray 的 TCP 数据，按 `maxPayloadBytes` 切分打包成
-   `xmc:data`；socket 读超时（keepAlive 秒）时发送 keep-alive；
-5. 当前线程读取客户端帧，`0x04` 忽略，`0x02` 且 channel 匹配时把载荷写入 Xray；
-6. 任一端关闭时同步关闭 socket 和连接。
+1. 按 preset 执行 39 轮 padding（6 轮启动 + 33 轮进服；server 写 19 轮、读 20 轮，
+   first turn 带 2 字节前缀 —— Login Ack 已被 vanilla 消费）；
+2. 通过 `TunnelConnector` 连接 `tunnel.host:port`，连接前再次校验地址为私有地址；
+3. 启动写线程读取 Xray 的 TCP 数据，按 `maxPayloadBytes` 切分打包成 `xmc:data`；
+   socket 读超时（keepAlive 秒）时发送 keep-alive；
+4. 当前线程读取客户端帧，`0x04` 忽略，`0x02` 且 channel 匹配时把载荷写入 Xray；
+5. 任一端关闭时同步关闭 socket 和连接。
 
-`RawConnection` 对上行帧做了 8 MiB 的缓冲上限，超过即断开，避免慢客户端
-撑爆内存。
+`RawConnection` 对上行数据做了 8 MiB 的缓冲上限。
+
+## 前置条件（vanilla 侧，模组不改）
+
+- `online-mode=true`：XMC 客户端要做 vanilla 的加密请求和 session join。离线模式下
+  vanilla 不发加密请求，XMC 客户端无法登录；启动时会打 warning。
+- `network-compression-threshold=-1`：Xray 客户端读不了
+  `ClientboundLoginCompressionPacket`；启动时会打 warning。
+- 白名单、封禁、人数限制按 vanilla 生效（登录阶段的 `canPlayerLogin`）。XMC 连接
+  不会进入 Play，因此不创建玩家实体，也不占 online 计数。
 
 ## 目录职责
 
 - `lib/`
   - `XmcLoginHooks`：lib 与 core 之间的静态注入点；
-  - `mixin/`：Minecraft 登录/密钥包/连接字段的 Mixin 与 accessor；
-  - `net/`：`RawConnection`、`RawFrameHandler`、空 PacketListener；
-  - `mc/MinecraftLoginSupport`：开启加密、发送登录成功/断开、接管管线；
-  - `model/McProfile`、`spi/*`：跨模块的档案与决策类型。
+  - `mixin/`：`handleLoginAcknowledgement` 注入 + 登录监听器 accessor；
+  - `net/LoginAckProbe`：落地判定；`RawConnection` / `RawFrameHandler`：接管后的裸流；
+  - `mc/MinecraftLoginSupport`：管线接管与 handler 名常量；
+  - `spi/XmcLoginHandler`：core 需要的三件事（enabled / probeTimeoutMillis / startSession）。
 - `config/`
-  - `XmcConfig`、`XmcConfigLoader`：JSON 解析、默认值、范围与档案校验；
+  - `XmcConfig`、`XmcConfigLoader`：JSON 解析、默认值与范围校验；
   - `PrivateAddress`：私有/回环/链路本地/CGNAT/ULA 判断，配置时和连接时都校验。
 - `core/`
-  - `XmcMod`：Fabric 入口，服务器启动时加载配置并安装 handler；
-  - `session/XmcRuntime`：派生密钥、校验密码/档案、创建会话；
+  - `XmcMod`：Fabric 入口，加载配置、安装 handler、检查 vanilla 前置条件；
+  - `session/XmcRuntime`：会话表；
   - `session/XmcSession`、`TunnelConnector`：padding、隧道与转发；
-  - `protocol/`：VarInt、帧、RSA 派生；
+  - `protocol/`：VarInt、帧；
   - `padding/`：preset 数据（由 Go 数据生成）、turn 读写。

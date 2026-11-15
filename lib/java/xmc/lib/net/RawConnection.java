@@ -77,6 +77,21 @@ public final class RawConnection {
         chunks.offer(body);
     }
 
+    /**
+     * Queues bytes that were already drained from the vanilla frame decoder, so
+     * the session sees them before anything that arrives after the takeover.
+     */
+    public void feed(byte[] bytes) {
+        if (bytes.length == 0 || closed.get()) {
+            return;
+        }
+        if (bufferedBytes.addAndGet(bytes.length) > maxBufferedBytes) {
+            close();
+            return;
+        }
+        chunks.offer(bytes.clone());
+    }
+
     void onClosed() {
         if (closed.compareAndSet(false, true)) {
             chunks.offer(CLOSED);

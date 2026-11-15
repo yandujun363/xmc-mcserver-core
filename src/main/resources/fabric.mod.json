@@ -3,7 +3,7 @@
 	"id": "xmc-mcserver-core",
 	"version": "${version}",
 	"name": "XMC MC Server Core",
-	"description": "XMC (Minecraft finalmask) server side for Fabric: accepts Xray XMC clients during the Configuration phase and relays the raw tunnel to a local Xray instance.",
+	"description": "XMC (Minecraft finalmask) server side for Fabric: detects an XMC landing after the vanilla Login Acknowledged packet and relays the xmc:data tunnel to a local Xray instance. Authentication, whitelist and bans stay vanilla.",
 	"authors": [
 		"yandujun363"
 	],

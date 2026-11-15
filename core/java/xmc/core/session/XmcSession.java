@@ -7,7 +7,6 @@ import xmc.core.padding.PaddingPreset26;
 import xmc.core.padding.PaddingTurn;
 import xmc.core.protocol.FrameCodec;
 import xmc.core.protocol.VarInts;
-import xmc.lib.model.McProfile;
 import xmc.lib.net.RawConnection;
 
 import java.io.BufferedInputStream;
@@ -35,8 +34,8 @@ import java.util.function.Consumer;
  * Server side of one XMC tunnel:
  *
  * <ol>
- *   <li>read the vanilla Login Acknowledged packet (the first raw frame),</li>
- *   <li>run the captured startup/play-join padding schedule,</li>
+ *   <li>run the captured startup/play-join padding schedule (the Login
+ *       Acknowledged packet itself was already consumed by vanilla),</li>
  *   <li>connect to the local Xray VLESS inbound and relay opaque bytes.</li>
  * </ol>
  *
@@ -44,7 +43,8 @@ import java.util.function.Consumer;
  * {@code xmc:data} configuration payload packets (and answers keep-alives).
  */
 public final class XmcSession implements Runnable {
-    private static final int LOGIN_ACKNOWLEDGED_ID = 0x03;
+    /** Wire length of the vanilla Login Acknowledged packet: VarInt(1) + packet id. */
+    private static final int LOGIN_ACKNOWLEDGED_WIRE_LENGTH = 2;
     private static final int CONFIGURATION_CLIENTBOUND_CUSTOM_PAYLOAD = 0x01;
     private static final int CONFIGURATION_SERVERBOUND_CUSTOM_PAYLOAD = 0x02;
     private static final int CONFIGURATION_KEEP_ALIVE = 0x04;
@@ -58,7 +58,7 @@ public final class XmcSession implements Runnable {
 
     private final RawConnection connection;
     private final XmcConfig config;
-    private final McProfile profile;
+    private final String playerName;
     private final Consumer<XmcSession> onClose;
     private final Random random = new Random();
     private final AtomicBoolean stopped = new AtomicBoolean();
@@ -66,14 +66,13 @@ public final class XmcSession implements Runnable {
 
     private volatile Socket tunnel;
     private volatile boolean paddingDone;
-    private int pendingPrefix;
     private long keepAliveId;
 
-    public XmcSession(RawConnection connection, XmcConfig config, McProfile profile,
+    public XmcSession(RawConnection connection, XmcConfig config, String playerName,
                       Consumer<XmcSession> onClose) {
         this.connection = connection;
         this.config = config;
-        this.profile = profile;
+        this.playerName = playerName;
         this.onClose = onClose;
     }
 
@@ -99,7 +98,6 @@ public final class XmcSession implements Runnable {
                 }
             }, config.handshakeTimeoutSeconds(), TimeUnit.SECONDS);
             try {
-                consumeLoginAcknowledged(in);
                 runPadding(in, out);
             } finally {
                 handshakeTimeout.cancel(false);
@@ -123,25 +121,14 @@ public final class XmcSession implements Runnable {
         }
     }
 
-    private void consumeLoginAcknowledged(DataInputStream in) throws IOException {
-        FrameCodec.Frame frame = FrameCodec.read(in, MAX_RAW_FRAME);
-        if (frame.body().length != 1 || frame.body()[0] != LOGIN_ACKNOWLEDGED_ID) {
-            throw new IOException("expected login acknowledged, got frame of " + frame.body().length + " bytes");
-        }
-        // The first client padding turn counts the 2 wire bytes of this packet
-        // (VarInt(1) + packet id) as its prefix, exactly like Xray-core.
-        if (frame.wireLength() != 2) {
-            throw new IOException("unexpected login acknowledged wire length: " + frame.wireLength());
-        }
-        pendingPrefix = frame.wireLength();
-    }
-
     private void runPadding(DataInputStream in, DataOutputStream out)
             throws IOException, InterruptedException {
         List<PaddingTurn> schedule = PaddingPreset26.serverSchedule(random);
         for (int index = 0; index < schedule.size(); index++) {
             PaddingTurn turn = schedule.get(index);
-            int prefixLength = index == 0 ? pendingPrefix : 0;
+            // The first client padding turn counts the 2 wire bytes of the Login
+            // Acknowledged packet as its prefix, exactly like Xray-core.
+            int prefixLength = index == 0 ? LOGIN_ACKNOWLEDGED_WIRE_LENGTH : 0;
             if (turn.sendsFromServer()) {
                 PaddingCodec.writeTurn(out, turn, prefixLength, sleeper, random);
             } else {
@@ -274,6 +261,6 @@ public final class XmcSession implements Runnable {
 
     @Override
     public String toString() {
-        return "XmcSession[" + profile.username() + " @ " + connection.remoteAddress() + "]";
+        return "XmcSession[" + playerName + " @ " + connection.remoteAddress() + "]";
     }
 }

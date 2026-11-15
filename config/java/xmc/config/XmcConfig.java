@@ -1,66 +1,43 @@
 package xmc.config;
 
-import xmc.lib.model.McProfile;
-
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
  * Validated configuration of the XMC server.
+ *
+ * <p>There is deliberately no credential or player list here: players are
+ * authenticated, whitelisted and banned by vanilla Minecraft, and the mod only
+ * recognises the XMC tunnel by the protocol shape of the connection.
  */
 public record XmcConfig(
         boolean enabled,
-        String password,
         String channel,
         int keepAliveSeconds,
         int maxPayloadBytes,
         int handshakeTimeoutSeconds,
-        List<McProfile> profiles,
+        int probeTimeoutMillis,
         Tunnel tunnel) {
 
     public static final String DEFAULT_CHANNEL = "xmc:data";
     public static final int DEFAULT_KEEP_ALIVE_SECONDS = 15;
     public static final int DEFAULT_MAX_PAYLOAD_BYTES = 24 * 1024;
     public static final int DEFAULT_HANDSHAKE_TIMEOUT_SECONDS = 120;
+    public static final int DEFAULT_PROBE_TIMEOUT_MILLIS = 800;
 
-    private static final Pattern USERNAME = Pattern.compile("[A-Za-z0-9_]{3,16}");
     private static final Pattern CHANNEL = Pattern.compile("[a-z0-9_.-]+:[a-z0-9_./-]+");
-
-    public XmcConfig {
-        profiles = List.copyOf(profiles);
-    }
 
     public record Tunnel(String host, int port, int connectTimeoutMillis) {
     }
 
     public static XmcConfig disabled() {
-        return new XmcConfig(false, "", DEFAULT_CHANNEL, DEFAULT_KEEP_ALIVE_SECONDS,
-                DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_HANDSHAKE_TIMEOUT_SECONDS, List.of(),
-                new Tunnel("127.0.0.1", 0, 5000));
-    }
-
-    public byte[] passwordBytes() {
-        return password.getBytes(StandardCharsets.UTF_8);
-    }
-
-    public Optional<McProfile> findProfile(String username, UUID uuid) {
-        for (McProfile profile : profiles) {
-            if (profile.username().equals(username) && profile.uuid().equals(uuid)) {
-                return Optional.of(profile);
-            }
-        }
-        return Optional.empty();
+        return new XmcConfig(false, DEFAULT_CHANNEL, DEFAULT_KEEP_ALIVE_SECONDS,
+                DEFAULT_MAX_PAYLOAD_BYTES, DEFAULT_HANDSHAKE_TIMEOUT_SECONDS,
+                DEFAULT_PROBE_TIMEOUT_MILLIS, new Tunnel("127.0.0.1", 0, 5000));
     }
 
     static void validate(XmcConfig config) {
         if (!config.enabled()) {
             return;
-        }
-        if (config.password().isEmpty()) {
-            throw new IllegalArgumentException("\"password\" must not be empty when XMC is enabled");
         }
         if (!CHANNEL.matcher(config.channel()).matches()) {
             throw new IllegalArgumentException("\"channel\" must be a Minecraft resource identifier, e.g. xmc:data");
@@ -74,18 +51,8 @@ public record XmcConfig(
         if (config.handshakeTimeoutSeconds() < 1 || config.handshakeTimeoutSeconds() > 600) {
             throw new IllegalArgumentException("\"handshakeTimeoutSeconds\" must be between 1 and 600");
         }
-        if (config.profiles().isEmpty()) {
-            throw new IllegalArgumentException("\"profiles\" must contain at least one profile when XMC is enabled");
-        }
-        for (McProfile profile : config.profiles()) {
-            if (!USERNAME.matcher(profile.username()).matches()) {
-                throw new IllegalArgumentException("invalid profile username: " + profile.username());
-            }
-            if (profile.texturesValue() == null || profile.texturesValue().isEmpty()
-                    || profile.texturesSignature() == null || profile.texturesSignature().isEmpty()) {
-                throw new IllegalArgumentException("profile " + profile.username()
-                        + " needs both texturesValue and texturesSignature");
-            }
+        if (config.probeTimeoutMillis() < 100 || config.probeTimeoutMillis() > 5000) {
+            throw new IllegalArgumentException("\"probeTimeoutMillis\" must be between 100 and 5000");
         }
         if (config.tunnel().port() < 1 || config.tunnel().port() > 65535) {
             throw new IllegalArgumentException("\"tunnel.port\" must be between 1 and 65535");
