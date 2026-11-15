@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "xmc-mcserver-core",
+	"version": "${version}",
+	"name": "XMC MC Server Core",
+	"description": "XMC (Minecraft finalmask) server side for Fabric: accepts Xray XMC clients during the Configuration phase and relays the raw tunnel to a local Xray instance.",
+	"authors": [
+		"yandujun363"
+	],
+	"contact": {
+		"sources": "https://github.com/yandujun363/xmc-mcserver-core"
+	},
+	"license": "MIT",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"xmc.core.XmcMod"
+		]
+	},
+	"mixins": [
+		"xmc-mcserver-core.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"fabric-api": "*",
+		"minecraft": "~26.1",
+		"java": ">=25"
+	}
+}
