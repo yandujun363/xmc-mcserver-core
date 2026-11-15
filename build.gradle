@@ -84,3 +84,11 @@ tasks.register('probeVanilla', JavaExec) {
 	mainClass = 'xmc.probe.XmcProbe'
 	args 'vanilla'
 }
+
+// Online-mode landing probe; credentials come from the environment:
+//   XMC_TEST_EMAIL, XMC_TEST_PASSWORD, XMC_TEST_API (optional)
+tasks.register('probeOnline', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = 'xmc.probe.XmcProbe'
+	args 'vanilla-online'
+}

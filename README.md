@@ -110,7 +110,16 @@ src/      fabric.mod.json、单元测试、开发者探针
 ```bash
 ./gradlew runServer    # 离线模式即可
 ./gradlew probe        # 原生帧 padding + xmc:data 双向转发
-./gradlew probeVanilla # 普通客户端必须能一路走到 Play 阶段
+./gradlew probeVanilla # 普通客户端（离线模式）必须能一路走到 Play 阶段
+```
+
+在线模式可以用 `probeOnline` 完整模拟一次原版登录（Yggdrasil 认证 + session join +
+加密 + Configuration 握手），走的就是普通玩家的路径：
+
+```bash
+XMC_TEST_EMAIL=player@example.com XMC_TEST_PASSWORD=secret \
+XMC_TEST_API=http://127.0.0.1:8080/api/yggdrasil \
+  ./gradlew probeOnline
 ```
 
 ## 已知限制
