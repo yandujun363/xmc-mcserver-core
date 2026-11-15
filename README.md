@@ -9,9 +9,9 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Mine
 > 模组**不参与认证，也不接管连接**：没有 mixin，不改登录分支，不拆 vanilla 的
 > 管线。登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责。
 >
-> Xray 侧需要 **原生帧 padding**（`"framePadding": true`）。该模式目前在本仓库
-> 的本地分支里（基于草案 #7416 的 Yggdrasil 登录 + native padding），上游合并前
-> 没有可用的客户端实现。
+> Xray 侧需要 **原生帧 padding**。该格式在 PR #7402（`XMC: native frame padding
+> and delay range`）里，按 maintainer 要求做成 breaking change，默认生效、没有配置
+> 开关。Yggdrasil 登录仍在等待草案 #7416，上游合并前没有完整的客户端实现。
 
 ## 它做什么
 

@@ -63,8 +63,8 @@ networking 层对没有 handler 的 channel 返回 `false` 后也交回 vanilla�
 ## 为什么不接管 vanilla
 
 旧实现需要在 Login Ack 处拆掉 `splitter`/`decoder`，因为 padding 记录的长度
-字段包含自身 varint，vanilla 的帧解析会错位。现在 Xray 侧改成原生帧
-（`framePadding`），padding 就是普通的 custom payload，vanilla 的管线保持原样：
+字段包含自身 varint，vanilla 的帧解析会错位。现在 Xray 侧改成原生帧（PR #7402，
+breaking、默认生效），padding 就是普通的 custom payload，vanilla 的管线保持原样：
 
 - 不需要 mixin，不需要 accessor；
 - 不需要 `FlowControlHandler` 处理、不需要手工恢复 autoRead；
