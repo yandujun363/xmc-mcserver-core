@@ -9,9 +9,13 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Mine
 > 模组**不参与认证，也不接管连接**：没有 mixin，不改登录分支，不拆 vanilla 的
 > 管线。登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责。
 >
-> Xray 侧需要 **原生帧 padding**。该格式在 PR #7402（`XMC: native frame padding
-> and delay range`）里，按 maintainer 要求做成 breaking change，默认生效、没有配置
-> 开关。Yggdrasil 登录仍在等待草案 #7416，上游合并前没有完整的客户端实现。
+> Xray 侧需要 **原生帧 padding**。该格式在 PR #7402
+> （`XMC: native frame padding and delay range`，
+> https://github.com/XTLS/Xray-core/pull/7402）里，按 maintainer 要求做成 breaking
+> change，默认生效、没有配置开关。同一个 PR 还补上了 `Set Compression` 支持
+> （https://github.com/XTLS/Xray-core/issues/7394#issuecomment-6895583085），客户端
+> 可以在开启压缩的服务端上完成登录。Yggdrasil 登录仍在等待草案 #7416
+> （https://github.com/XTLS/Xray-core/pull/7416），上游合并前没有完整的客户端实现。
 
 ## 它做什么
 
@@ -55,9 +59,10 @@ custom payload 包（`xmc:pad`），长度字段按原生语义。vanilla 的 sp
 | 项目 | 取值 | 原因 |
 | --- | --- | --- |
 | `online-mode` | `true` | XMC 客户端要走 vanilla 的加密请求和 session join；离线模式没有加密请求 |
-| `network-compression-threshold` | `-1` | Xray 客户端读不了 `ClientboundLoginCompressionPacket` |
+| `network-compression-threshold` | `65536`（或 `-1`） | `65536` 让 padding（≤32767）和 `xmc:data`（≤24 KiB）保持未压缩，大包照常压缩；`-1` 完全关闭压缩。需要含 `Set Compression` 支持的 Xray：https://github.com/XTLS/Xray-core/pull/7402 |
 
-两者都是服务端设置，模组不会替你改；不满足时启动日志会打 warning。
+两者都是服务端设置，模组不会替你改；`online-mode` 不满足时启动日志会打 warning，
+`network-compression-threshold` 低于 `65536` 时会提示 padding 会被压小。
 `enforce-secure-profile=false` 也是实际测试需要的（Xray 客户端没有聊天签名密钥）。
 
 ## 安全边界
@@ -121,6 +126,9 @@ XMC_TEST_EMAIL=player@example.com XMC_TEST_PASSWORD=secret \
 XMC_TEST_API=http://127.0.0.1:8080/api/yggdrasil \
   ./gradlew probeOnline
 ```
+
+> 探针本身没有实现压缩：开发服务器请保持 `network-compression-threshold=-1`，
+> 否则探针会在 Login 阶段拒绝 `Set Compression`。上面的 `65536` 推荐值针对玩家部署。
 
 ## 已知限制
 

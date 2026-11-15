@@ -66,8 +66,10 @@ public final class XmcMod implements ModInitializer {
 
     /**
      * The XMC client performs a real Minecraft login, so it needs the vanilla
-     * encryption request and it cannot negotiate login compression. Both are
-     * plain server settings; the mod never forces them.
+     * encryption request. Login compression is supported by the client
+     * (https://github.com/XTLS/Xray-core/pull/7402), but a low threshold
+     * compresses the padding frames away. Both are plain server settings; the
+     * mod never forces them.
      */
     private static void warnAboutServerSettings(MinecraftServer server) {
         if (!server.usesAuthentication()) {
@@ -75,9 +77,11 @@ public final class XmcMod implements ModInitializer {
                     + "so enable online-mode or XMC clients cannot log in.");
         }
         int threshold = server.getCompressionThreshold();
-        if (threshold >= 0) {
-            LOGGER.warn("XMC: network-compression-threshold is {}. The XMC client cannot read the login "
-                    + "compression packet; set network-compression-threshold=-1.", threshold);
+        if (threshold >= 0 && threshold < 65536) {
+            LOGGER.warn("XMC: network-compression-threshold is {}. The XMC client reads the compressed "
+                    + "framing (https://github.com/XTLS/Xray-core/pull/7402), but padding frames are "
+                    + "compressed away below 65536; use 65536 to keep padding and tunnel payloads "
+                    + "uncompressed, or -1 to disable compression.", threshold);
         }
     }
 
