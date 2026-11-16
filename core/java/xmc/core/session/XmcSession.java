@@ -32,12 +32,13 @@ import java.util.function.Consumer;
  *
  * <ol>
  *   <li>sends the captured server-to-client startup padding, framed as ordinary
- *       {@code xmc:pad} custom payloads,</li>
+ *       custom payloads on the configured padding channel,</li>
  *   <li>connects to the local Xray VLESS inbound,</li>
- *   <li>relays opaque bytes in both directions through {@code xmc:data}.</li>
+ *   <li>relays opaque bytes in both directions through the configured data
+ *       channel.</li>
  * </ol>
  *
- * <p>The client's own padding arrives as {@code xmc:pad} payloads and is dropped
+ * <p>The client's own padding arrives on the padding channel and is dropped
  * by vanilla before it reaches the mod, so it is never read here.
  */
 public final class XmcSession {
@@ -69,7 +70,7 @@ public final class XmcSession {
         thread.start();
     }
 
-    /** Called on the server thread for every {@code xmc:data} payload. */
+    /** Called on the server thread for every data-channel payload. */
     public void offer(byte[] data) {
         if (closed.get()) {
             return;

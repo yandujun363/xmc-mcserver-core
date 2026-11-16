@@ -10,7 +10,7 @@ import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
  * <p>Only the configuration state is used. That state is entered after a
  * successful vanilla login, so the mod never sees credentials, never sends a
  * Login Success and never touches the login pipeline. It registers the two
- * channels at startup and forwards payloads; the rest is vanilla.
+ * configured channels at startup and forwards payloads; the rest is vanilla.
  */
 public final class XmcNetworking {
     private static volatile XmcChannelHandler handler;
@@ -26,11 +26,18 @@ public final class XmcNetworking {
         handler = null;
     }
 
-    /** Must run once, from {@code onInitialize}, before any connection exists. */
-    public static void register() {
-        XmcPayloads.register();
+    /**
+     * Registers the payload types and the data-channel receiver.
+     *
+     * <p>Must run once, from {@code onInitialize}, before any connection exists.
+     * The channel ids come from the configuration and have already been
+     * validated; a duplicate or invalid id surfaces as a runtime exception that
+     * the caller is expected to contain.
+     */
+    public static void register(String dataChannel, String paddingChannel) {
+        XmcPayloads.register(dataChannel, paddingChannel);
 
-        ServerConfigurationNetworking.registerGlobalReceiver(XmcPayloads.DATA_TYPE, (payload, context) -> {
+        ServerConfigurationNetworking.registerGlobalReceiver(XmcPayloads.dataType(), (payload, context) -> {
             XmcChannelHandler current = handler;
             if (current != null) {
                 current.onData(context.packetListener(), payload.data());

@@ -10,7 +10,7 @@ import net.minecraft.server.network.ServerConfigurationPacketListenerImpl;
  * only ever sees configuration-state payloads.
  */
 public interface XmcChannelHandler {
-    /** A complete {@code xmc:data} payload arrived on the server thread. */
+    /** A complete data-channel payload arrived on the server thread. */
     void onData(ServerConfigurationPacketListenerImpl listener, byte[] data);
 
     /** The connection left the configuration state; release its tunnel. */

@@ -41,6 +41,101 @@ class XmcConfigLoaderTest {
     }
 
     @Test
+    void defaultsToThePublicChannels() throws Exception {
+        Path path = directory.resolve("config.json");
+        Files.writeString(path, """
+                {
+                  "enabled": true,
+                  "tunnel": { "host": "127.0.0.1", "port": 10086 }
+                }
+                """);
+        XmcConfig config = XmcConfigLoader.loadOrCreate(path);
+        assertEquals("xmc:data", config.channels().data().id());
+        assertEquals("xmc:pad", config.channels().padding().id());
+    }
+
+    @Test
+    void loadsCustomChannels() throws Exception {
+        Path path = directory.resolve("config.json");
+        Files.writeString(path, """
+                {
+                  "enabled": true,
+                  "channels": { "data": "myxmc:stream", "padding": "myxmc:noise" },
+                  "tunnel": { "host": "127.0.0.1", "port": 10086 }
+                }
+                """);
+        XmcConfig config = XmcConfigLoader.loadOrCreate(path);
+        assertEquals("myxmc:stream", config.channels().data().id());
+        assertEquals("myxmc:noise", config.channels().padding().id());
+    }
+
+    @Test
+    void rejectsChannelWithoutNamespaceSeparator() throws Exception {
+        assertInvalidChannels("""
+                { "data": "xmc-data", "padding": "xmc:pad" }
+                """);
+    }
+
+    @Test
+    void rejectsUppercaseChannel() throws Exception {
+        assertInvalidChannels("""
+                { "data": "xmc:Data", "padding": "xmc:pad" }
+                """);
+    }
+
+    @Test
+    void rejectsMinecraftNamespace() throws Exception {
+        assertInvalidChannels("""
+                { "data": "minecraft:my_stream", "padding": "xmc:pad" }
+                """);
+    }
+
+    @Test
+    void rejectsDuplicateChannels() throws Exception {
+        assertInvalidChannels("""
+                { "data": "xmc:same", "padding": "xmc:same" }
+                """);
+    }
+
+    @Test
+    void rejectsDotDotNamespace() throws Exception {
+        assertInvalidChannels("""
+                { "data": "..:stream", "padding": "xmc:pad" }
+                """);
+    }
+
+    @Test
+    void rejectsOverlongChannel() throws Exception {
+        assertInvalidChannels("""
+                { "data": "xmc:%s", "padding": "xmc:pad" }
+                """.formatted("a".repeat(XmcConfig.MAX_CHANNEL_ID_LENGTH)));
+    }
+
+    private void assertInvalidChannels(String channels) throws Exception {
+        Path path = directory.resolve("config.json");
+        Files.writeString(path, """
+                {
+                  "enabled": true,
+                  "channels": %s,
+                  "tunnel": { "host": "127.0.0.1", "port": 10086 }
+                }
+                """.formatted(channels));
+        assertThrows(IllegalArgumentException.class, () -> XmcConfigLoader.loadOrCreate(path));
+    }
+
+    @Test
+    void rejectsInvalidChannelsEvenWhenDisabled() throws Exception {
+        Path path = directory.resolve("config.json");
+        Files.writeString(path, """
+                {
+                  "enabled": false,
+                  "channels": { "data": "XMC:data", "padding": "xmc:pad" }
+                }
+                """);
+        assertThrows(IllegalArgumentException.class, () -> XmcConfigLoader.loadOrCreate(path));
+    }
+
+    @Test
     void rejectsPublicRelayAddress() throws Exception {
         Path path = directory.resolve("config.json");
         Files.writeString(path, """

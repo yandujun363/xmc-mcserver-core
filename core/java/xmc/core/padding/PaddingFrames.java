@@ -5,7 +5,7 @@ import java.util.Random;
 
 /**
  * Writes a padding turn as a sequence of Minecraft custom payload frames on
- * {@code xmc:pad}.
+ * the configured padding channel (default {@code xmc:pad}).
  *
  * <p>Nothing here is a "record whose length includes its own varint" any more:
  * every write becomes a real configuration-state custom payload packet, so the
@@ -31,7 +31,7 @@ public final class PaddingFrames {
 
     @FunctionalInterface
     public interface PayloadSink {
-        /** Sends one {@code xmc:pad} payload. Called on the session thread. */
+        /** Sends one padding-channel payload. Called on the session thread. */
         void send(byte[] data);
     }
 

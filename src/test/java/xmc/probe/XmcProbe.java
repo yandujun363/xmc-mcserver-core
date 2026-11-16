@@ -40,10 +40,15 @@ import java.util.UUID;
  * Developer-only integration probe against a running dev server.
  *
  * <pre>
- * ./gradlew probe          # XMC: Login Ack + padding + xmc:data relay
+ * ./gradlew probe          # XMC: Login Ack + padding + data-channel relay
  * ./gradlew probeVanilla   # ordinary client (offline mode): must reach Play
  * ./gradlew probeOnline    # ordinary client (online mode, real Yggdrasil login)
  * </pre>
+ *
+ * <p>The channel ids default to {@code xmc:data} / {@code xmc:pad}. When the
+ * server configuration changes them, set XMC_PROBE_DATA_CHANNEL and
+ * XMC_PROBE_PADDING_CHANNEL (or -Dxmc.probe.data / -Dxmc.probe.padding) to the
+ * same values.
  *
  * <p>{@code probe} does not authenticate and needs an offline-mode dev server.
  * {@code probeOnline} performs the full online-mode login (Yggdrasil
@@ -56,6 +61,10 @@ public final class XmcProbe {
     private static final String HOST = "127.0.0.1";
     private static final int SERVER_PORT = 25565;
     private static final int TUNNEL_PORT = 10086;
+    private static final String DATA_CHANNEL =
+            channelName("XMC_PROBE_DATA_CHANNEL", "xmc.probe.data", "xmc:data");
+    private static final String PADDING_CHANNEL =
+            channelName("XMC_PROBE_PADDING_CHANNEL", "xmc.probe.padding", "xmc:pad");
     private static final UUID PROFILE_UUID = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
 
     private static final int LOGIN_SUCCESS = 0x02;
@@ -129,16 +138,16 @@ public final class XmcProbe {
                 }
                 PaddingFrames.writeTurn(data -> {
                     try {
-                        writePacket(out, CONFIGURATION_SERVERBOUND_CUSTOM_PAYLOAD, "xmc:pad", data);
+                        writePacket(out, CONFIGURATION_SERVERBOUND_CUSTOM_PAYLOAD, PADDING_CHANNEL, data);
                     } catch (Exception e) {
                         throw new IllegalStateException(e);
                     }
                 }, turn, i == 0 ? 2 : 0, Thread::sleep, random);
             }
             out.flush();
-            System.out.println("[probe] padding complete; relaying through xmc:data");
+            System.out.println("[probe] padding complete; relaying through " + DATA_CHANNEL);
 
-            sendCustomPayload(out, "xmc:data", "HELLO-XMC");
+            sendCustomPayload(out, DATA_CHANNEL, "HELLO-XMC");
             long deadline = System.currentTimeMillis() + 30000;
             while (System.currentTimeMillis() < deadline) {
                 FrameCodec.Frame frame = FrameCodec.read(in, 1 << 20);
@@ -156,8 +165,8 @@ public final class XmcProbe {
                     continue;
                 }
                 String channel = readString(body);
-                if (!"xmc:data".equals(channel)) {
-                    // xmc:pad: the startup padding is ordinary traffic.
+                if (!DATA_CHANNEL.equals(channel)) {
+                    // PADDING_CHANNEL: the startup padding is ordinary traffic.
                     continue;
                 }
                 byte[] data = body.readAllBytes();
@@ -387,6 +396,15 @@ public final class XmcProbe {
             return null;
         }
         return value;
+    }
+
+    /** Environment first (Gradle JavaExec inherits it), then a system property. */
+    private static String channelName(String envName, String propertyName, String fallback) {
+        String value = env(envName);
+        if (value == null) {
+            value = System.getProperty(propertyName);
+        }
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     private static byte[] readBytes(InputStream in) throws Exception {

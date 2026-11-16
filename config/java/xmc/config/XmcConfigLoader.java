@@ -21,6 +21,10 @@ public final class XmcConfigLoader {
             {
               "enabled": false,
               "maxPayloadBytes": 24576,
+              "channels": {
+                "data": "xmc:data",
+                "padding": "xmc:pad"
+              },
               "tunnel": {
                 "host": "127.0.0.1",
                 "port": 10086,
@@ -62,6 +66,13 @@ public final class XmcConfigLoader {
         boolean enabled = bool(root, "enabled", false);
         int maxPayloadBytes = integer(root, "maxPayloadBytes", XmcConfig.DEFAULT_MAX_PAYLOAD_BYTES);
 
+        JsonObject channelsObject = root.has("channels") && root.get("channels").isJsonObject()
+                ? root.getAsJsonObject("channels")
+                : new JsonObject();
+        XmcConfig.Channels channels = new XmcConfig.Channels(
+                channel(channelsObject, "data", XmcConfig.Channels.DEFAULT_DATA),
+                channel(channelsObject, "padding", XmcConfig.Channels.DEFAULT_PADDING));
+
         JsonObject tunnelObject = root.has("tunnel") && root.get("tunnel").isJsonObject()
                 ? root.getAsJsonObject("tunnel")
                 : new JsonObject();
@@ -70,7 +81,24 @@ public final class XmcConfigLoader {
                 integer(tunnelObject, "port", 0),
                 integer(tunnelObject, "connectTimeoutMillis", 5000));
 
-        return new XmcConfig(enabled, maxPayloadBytes, tunnel);
+        return new XmcConfig(enabled, maxPayloadBytes, channels, tunnel);
+    }
+
+    private static XmcConfig.Channel channel(JsonObject object, String key, XmcConfig.Channel fallback) {
+        JsonElement element = object.get(key);
+        if (element == null || element.isJsonNull()) {
+            return fallback;
+        }
+        if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+            throw new IllegalArgumentException("\"channels." + key + "\" must be a string like \"xmc:data\"");
+        }
+        String value = element.getAsString();
+        int separator = value.indexOf(':');
+        if (separator <= 0 || separator != value.lastIndexOf(':')) {
+            throw new IllegalArgumentException("\"channels." + key
+                    + "\" must be a full channel id with exactly one ':' separator, e.g. \"xmc:data\"");
+        }
+        return new XmcConfig.Channel(value.substring(0, separator), value.substring(separator + 1));
     }
 
     private static boolean bool(JsonObject object, String key, boolean fallback) {

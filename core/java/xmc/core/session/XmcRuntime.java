@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>It takes no part in authentication: by the time a payload arrives vanilla
  * has already finished the login. A session is created lazily on the first
- * {@code xmc:data} payload, so an ordinary player never allocates one.
+ * data-channel payload, so an ordinary player never allocates one.
  */
 public final class XmcRuntime implements XmcChannelHandler {
     private final XmcConfig config;

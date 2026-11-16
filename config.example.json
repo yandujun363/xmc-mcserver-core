@@ -1,6 +1,10 @@
 {
   "enabled": false,
   "maxPayloadBytes": 24576,
+  "channels": {
+    "data": "xmc:data",
+    "padding": "xmc:pad"
+  },
   "tunnel": {
     "host": "127.0.0.1",
     "port": 10086,
