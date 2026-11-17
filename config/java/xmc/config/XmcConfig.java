@@ -50,6 +50,10 @@ public record XmcConfig(
         }
     }
 
+    /**
+     * The local TCP endpoint the tunnel bytes are piped into. Nothing here
+     * names a protocol: any inbound that accepts a raw byte stream works.
+     */
     public record Tunnel(String host, int port, int connectTimeoutMillis) {
     }
 
