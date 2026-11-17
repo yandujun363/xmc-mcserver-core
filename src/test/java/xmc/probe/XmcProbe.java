@@ -57,7 +57,8 @@ import java.util.UUID;
  * against an online-mode server.
  */
 public final class XmcProbe {
-    private static final int PROTOCOL = 775;
+    /** Protocol version of the dev server under test; override with -Dxmc.probe.protocol. */
+    private static final int PROTOCOL = Integer.getInteger("xmc.probe.protocol", 775);
     private static final String HOST = "127.0.0.1";
     private static final int SERVER_PORT = 25565;
     private static final int TUNNEL_PORT = 10086;
