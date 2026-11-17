@@ -8,8 +8,6 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Mine
 >
 > 多版本分支（每个 MC 版本一个分支，独立构建）见 [VERSIONS.md](VERSIONS.md)。
 >
-> NeoForge 移植的交接说明见 [HANDOVER-NEOFORGE.md](HANDOVER-NEOFORGE.md)。
->
 > 模组**不参与认证，也不接管连接**：没有 mixin，不改登录分支，不拆 vanilla 的
 > 管线。登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责。
 >
@@ -204,6 +202,18 @@ XMC_TEST_API=http://127.0.0.1:8080/api/yggdrasil \
 
 > 探针本身没有实现压缩：开发服务器请保持 `network-compression-threshold=-1`，
 > 否则探针会在 Login 阶段拒绝 `Set Compression`。上面的 `65536` 推荐值针对玩家部署。
+
+## 支持范围
+
+- **加载器：只有 Fabric。** 服务端侧仅提供 Fabric 实现。
+- **Minecraft：26.x 与 1.21.x。** 每个版本一个独立分支，见 [VERSIONS.md](VERSIONS.md)。
+  1.20.x 不做：1.20.1 没有 Configuration 状态，1.20.2–1.20.4 的 Configuration 自定义载荷
+  包 ID 与之后不同，而 Xray 的 XMC 客户端只实现了协议 775。
+- **NeoForge：不做。** NeoForge 的网络层相对原版改动很大（通道协商、`minecraft:register`、
+  Configuration 阶段的 ping/pong 门控），客户端要兼容就得按照它的实现来写；而 NeoForge 是
+  **LGPL-2.1**、Xray-core 是 **MPL-2.0**，两者不兼容（把 LGPL 代码并入 MPL 工程后，整体分发
+  要按 LGPL 处理）。因此本模组不提供 NeoForge 适配，也不会为实现 Xray 的 NeoForge 兼容而
+  引入相关代码。
 
 ## 已知限制
 
