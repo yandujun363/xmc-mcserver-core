@@ -7,6 +7,15 @@ pluginManagement {
 		mavenCentral()
 		gradlePluginPortal()
 	}
+	resolutionStrategy {
+		eachPlugin {
+			// Older Loom releases ship without a plugin marker artifact, so map the
+			// plugin id to the implementation module explicitly.
+			if (requested.id.id == 'fabric-loom') {
+				useModule("net.fabricmc:fabric-loom:${requested.version}")
+			}
+		}
+	}
 }
 
 rootProject.name = 'xmc-mcserver-core'

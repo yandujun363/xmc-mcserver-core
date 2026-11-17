@@ -40,7 +40,7 @@ public final class XmcNetworking {
         ServerConfigurationNetworking.registerGlobalReceiver(XmcPayloads.dataType(), (payload, context) -> {
             XmcChannelHandler current = handler;
             if (current != null) {
-                current.onData(context.packetListener(), payload.data());
+                current.onData(context.networkHandler(), payload.data());
             }
         });
 

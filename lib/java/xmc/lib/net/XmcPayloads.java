@@ -55,9 +55,9 @@ public final class XmcPayloads {
         CustomPacketPayload.Type<Data> newDataType = new CustomPacketPayload.Type<>(data);
         CustomPacketPayload.Type<Padding> newPaddingType = new CustomPacketPayload.Type<>(padding);
 
-        PayloadTypeRegistry.serverboundConfiguration().register(newDataType, DATA_CODEC);
-        PayloadTypeRegistry.clientboundConfiguration().register(newDataType, DATA_CODEC);
-        PayloadTypeRegistry.clientboundConfiguration().register(newPaddingType, PADDING_CODEC);
+        PayloadTypeRegistry.configurationC2S().register(newDataType, DATA_CODEC);
+        PayloadTypeRegistry.configurationS2C().register(newDataType, DATA_CODEC);
+        PayloadTypeRegistry.configurationS2C().register(newPaddingType, PADDING_CODEC);
 
         dataChannel = data;
         paddingChannel = padding;
