@@ -33,7 +33,8 @@ import java.util.function.Consumer;
  * <ol>
  *   <li>sends the captured server-to-client startup padding, framed as ordinary
  *       custom payloads on the configured padding channel,</li>
- *   <li>connects to the local Xray VLESS inbound,</li>
+ *   <li>connects to the configured tunnel endpoint (an opaque TCP stream,
+ *       so any TCP inbound works and VLESS is only the lightest one),</li>
  *   <li>relays opaque bytes in both directions through the configured data
  *       channel.</li>
  * </ol>

@@ -2,7 +2,12 @@
 
 XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Minecraft 26.2
 服务端在 **25565 同一端口**上同时服务普通玩家和 Xray XMC 客户端，并把 XMC 隧道
-里的原始字节流转发给本机负责分流的 Xray（VLESS，TCP，无加密）。
+里的原始字节流转发给本机的一个 TCP 端口。
+
+隧道内容不在模组的可见范围内：它只认识 XMC 这一层（通道与帧），载荷字节原样转发。
+所以对面可以是**任意 TCP inbound**——VLESS、VMess、Trojan、Shadowsocks、SOCKS5、
+HTTP CONNECT，甚至另一层 XMC（嵌套）。VLESS 只是其中最轻量的一个，不是唯一选择，
+见[隧道里跑什么](#隧道里跑什么)。
 
 > 协议版本：Minecraft **26.2 = 网络协议 776**。
 >
@@ -35,10 +40,13 @@ Fabric 26.2 服务端（本模组）
     │    xmc:pad   启动 padding（普通自定义载荷，vanilla 直接丢弃）
     │    xmc:data  隧道字节流
     ▼
-127.0.0.1:10086 等私有地址
+127.0.0.1:10086 等私有地址（任意 TCP inbound）
     │  原始 TCP，把收到的字节原样写出
     ▼
-本机 Xray（VLESS inbound，decryption=none）→ 分流 → 互联网
+本机 Xray（这里举 VLESS inbound，decryption=none；换别的协议同样成立）
+    │
+    ▼
+分流 → 互联网
 ```
 
 模组只做三件事：
@@ -46,10 +54,41 @@ Fabric 26.2 服务端（本模组）
 1. 按配置注册数据通道（默认 `xmc:data`）和 padding 通道（默认 `xmc:pad`）；
 2. 收到第一条数据通道载荷时创建会话，把捕获的 s2c 启动 padding 以 padding
    通道的自定义载荷发出去；
-3. 把数据通道载荷拼成字节流，与配置的 Xray 端点做 TCP 双向转发。
+3. 把数据通道载荷拼成字节流，与配置的 TCP 端点（默认本机 Xray）做双向转发。
 
 它不是 XMC 的连接：普通玩家不注册、不发任何东西，走的是和没有模组时完全一样的
 vanilla 路径。
+
+## 隧道里跑什么
+
+模组对隧道内容是**完全不透明**的：`XmcSession` 从 socket 读到的字节按
+`maxPayloadBytes` 切块发出去，收到的每个数据通道载荷原样写回 socket。两边都没有
+握手检查、没有协议字段、没有端口约定；配置里唯一和"对面是谁"有关的就是
+`tunnel.host` / `tunnel.port`（见 [core/session/](core/java/xmc/core/session/)）。
+
+所以对面**只需要是一个接受裸 TCP 的服务**：
+
+| 对面 | 说明 |
+| --- | --- |
+| VLESS inbound | 最轻量：一条 UUID + 命令头，无 TLS、无外层混淆，也是实际测过的那个 |
+| VMess / Trojan / Shadowsocks | 都能用；TLS 在流里正常跑，模组不碰字节内容 |
+| SOCKS5 / HTTP CONNECT | 也能用，适合直接把隧道当本地代理出口 |
+| 另一层 XMC | **嵌套可行**：`tunnel` 指向另一个跑本模组的 MC 服务端 |
+| 任意非代理服务 | 实现上就是个 `Socket` 转发，也能用，只是多数时候没意义 |
+
+边界都来自"这是一条字节流"本身，不是模组的选择：
+
+- **只有 TCP。** 模组不承载 UDP；需要 UDP 的协议要自己把 UDP 封进 TCP 流；
+- **一条 MC 连接 = 一条 TCP 连接。** 模组不做多路复用，要并发就用对端协议的 mux，
+  或者开多条 XMC 连接；
+- **MTU 是 `maxPayloadBytes`**（默认 24 KiB，上限 32767）。模组按这个大小切流，
+  所以它本身也是流量形状的一部分，别用整齐的整数；
+- **padding 与协议无关。** 启动 padding 复刻的是 vanilla 服务端 Configuration 阶段
+  的形状，跑什么协议都一样。
+
+嵌套（XMC over XMC）之所以成立，原因很直接：外层拿到的就是普通字节流，内层只是在
+这条流里再做一次 Minecraft 登录 + 隧道。代价是两跳 padding 的握手延迟和两倍的载荷
+开销，换来的是两段不同 IP / ASN 的落地；每一跳都可以用最轻量的 VLESS。
 
 ## 为什么不需要"落地判定"
 
@@ -218,6 +257,7 @@ XMC_TEST_API=http://127.0.0.1:8080/api/yggdrasil \
 ## 已知限制
 
 - 只支持 26.2（协议 776）的预设 padding 数据；
+- 隧道只承载 TCP 字节流：没有 UDP，也不做多路复用（见[隧道里跑什么](#隧道里跑什么)）；
 - 通道名在启动时注册，修改后必须重启服务端；
 - 客户端不发 `SelectKnownPacks`，所以 vanilla 的 Registry 同步任务会一直挂着，
   连接停在 Configuration 状态（keep-alive 由 vanilla 维持，客户端照常回）；
