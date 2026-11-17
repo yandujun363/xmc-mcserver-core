@@ -77,6 +77,12 @@ jar {
 tasks.register('probe', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = 'xmc.probe.XmcProbe'
+	// Vanilla servers reject clients whose handshake protocol differs from the
+	// server's own, so a non-26.1 dev server needs -Pxmc.probe.protocol=<n>.
+	String protocol = project.findProperty('xmc.probe.protocol')
+	if (protocol) {
+		systemProperty 'xmc.probe.protocol', protocol
+	}
 }
 
 tasks.register('probeVanilla', JavaExec) {
