@@ -11,10 +11,10 @@
 通道名来自配置而不是写死在代码里：固定的默认值是链路上可识别的指纹，部署方可以
 同时替换两端的通道名（Xray 侧的支持还在 PR/草案中）。
 
-## 连接时序（协议 775）
+## 连接时序（协议 769）
 
 ```
-C -> S  Handshake        id 0x00  protocol=775, address, port, nextState=2
+C -> S  Handshake        id 0x00  protocol=769, address, port, nextState=2
 C -> S  Login Start      id 0x00  username, uuid
 S -> C  Encryption Req   id 0x01  vanilla 自己的 RSA 公钥
 C -> S  Encryption Resp  id 0x01  encrypted(secret), encrypted(verifyToken)
