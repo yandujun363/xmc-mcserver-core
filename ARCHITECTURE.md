@@ -3,7 +3,10 @@
 ## 边界
 
 模组只做三件事：注册数据通道和 padding 通道（默认 `xmc:data` / `xmc:pad`）、在
-第一条数据通道载荷到来时建立会话、把隧道字节转发给本机 Xray。
+第一条数据通道载荷到来时建立会话、把隧道字节原样转发给本机的一个 TCP 端点。
+
+隧道内容模组不看：载荷按字节搬运，对面说什么协议与模组无关，VLESS 只是最轻量的
+选择（见下文[隧道是裸字节流](#隧道是裸字节流)）。
 
 登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责；模组
 **没有 mixin**，不改任何 vanilla 代码路径，配置里没有密码、玩家档案或密钥派生。
@@ -72,6 +75,22 @@ networking 层对没有 handler 的 channel 返回 `false` 后也交回 vanilla�
 客户端发来的 padding 通道载荷会被 vanilla 丢弃，模组不需要读；客户端自己的
 padding 也不会被消费。所以 padding 的方向、时机完全由发送方决定，两端没有校验
 依赖。
+
+## 隧道是裸字节流
+
+`TunnelConnector` 只做三件事：解析 `tunnel.host`、确认它是私有地址、`Socket.connect`
+并打开 `TCP_NODELAY`。`XmcSession` 两边都是纯字节搬运：
+
+- socket → 客户端：`read(buffer)` 之后按 `maxPayloadBytes` 切块，每块一个数据通道载荷；
+- 客户端 → socket：载荷先入队，会话线程 `out.write(data)`，队列空了再 flush。
+
+整条链路没有一处读协议头，没有协议字段，也没有硬编码端口。所以 `tunnel.host:port`
+上监听什么，隧道里就跑什么：VLESS、VMess、Trojan、Shadowsocks、SOCKS5、HTTP
+CONNECT，或者另一层 XMC（目标换成另一个跑本模组的 MC 服务端）。VLESS 只是最轻量的
+一个。限制也来自"字节流"：只有 TCP、一条连接一条流、不做 mux。
+
+这条边界也划出了红线：任何需要**解析**隧道内容的改动（协议探测、按端口分流、
+内容过滤、按协议改 MTU）都会把这个性质弄没，加之前先想清楚。
 
 ## 为什么不接管 vanilla
 
