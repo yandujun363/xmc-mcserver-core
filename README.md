@@ -1,10 +1,10 @@
 # xmc-mcserver-core
 
-XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Minecraft 26.1
+XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Minecraft 26.2
 服务端在 **25565 同一端口**上同时服务普通玩家和 Xray XMC 客户端，并把 XMC 隧道
 里的原始字节流转发给本机负责分流的 Xray（VLESS，TCP，无加密）。
 
-> 协议版本：Minecraft **26.1 = 网络协议 775**。
+> 协议版本：Minecraft **26.2 = 网络协议 776**。
 >
 > 模组**不参与认证，也不接管连接**：没有 mixin，不改登录分支，不拆 vanilla 的
 > 管线。登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责。
@@ -28,7 +28,7 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Mine
 Xray 客户端（XMC outbound，真实 Minecraft 登录 + 原生帧 padding）
     │  Handshake / Login Start / Encryption / Login Success —— 全是 vanilla 的
     ▼
-Fabric 26.1 服务端（本模组）
+Fabric 26.2 服务端（本模组）
     │  只注册两个 Configuration 状态通道（通道名可配置，默认）：
     │    xmc:pad   启动 padding（普通自定义载荷，vanilla 直接丢弃）
     │    xmc:data  隧道字节流
@@ -203,7 +203,7 @@ XMC_TEST_API=http://127.0.0.1:8080/api/yggdrasil \
 
 ## 已知限制
 
-- 只支持 26.1（协议 775）的预设 padding 数据；
+- 只支持 26.2（协议 776）的预设 padding 数据；
 - 通道名在启动时注册，修改后必须重启服务端；
 - 客户端不发 `SelectKnownPacks`，所以 vanilla 的 Registry 同步任务会一直挂着，
   连接停在 Configuration 状态（keep-alive 由 vanilla 维持，客户端照常回）；
