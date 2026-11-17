@@ -6,6 +6,8 @@ XMC（Minecraft finalmask）服务端的 Fabric 模组：让一个真实的 Mine
 
 > 协议版本：Minecraft **26.1 = 网络协议 775**。
 >
+> 多版本分支（每个 MC 版本一个分支，独立构建）见 [VERSIONS.md](VERSIONS.md)。
+>
 > 模组**不参与认证，也不接管连接**：没有 mixin，不改登录分支，不拆 vanilla 的
 > 管线。登录、加密、Yggdrasil / 离线认证、白名单与封禁全部由 vanilla 负责。
 >
