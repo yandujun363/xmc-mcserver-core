@@ -31,7 +31,7 @@ public record XmcConfig(
      * {@code Identifier.fromNamespaceAndPath} takes.
      *
      * <p>Both halves are validated with the same character rules vanilla uses,
-     * so constructing the {@code Identifier} during registration cannot throw.
+     * so constructing the {@code ResourceLocation} during registration cannot throw.
      */
     public record Channel(String namespace, String path) {
         /** The full {@code namespace:path} id used in the configuration file. */
