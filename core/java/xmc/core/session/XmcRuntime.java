@@ -35,7 +35,7 @@ public final class XmcRuntime implements XmcChannelHandler {
     public void onData(ServerConfigurationPacketListenerImpl listener, byte[] data) {
         XmcSession session = sessions.get(listener);
         if (session == null) {
-            String playerName = listener.getOwner().name();
+            String playerName = listener.getOwner().getName();
             XmcSession created = new XmcSession(listener, config, playerName,
                     closed -> sessions.remove(listener, closed));
             session = sessions.putIfAbsent(listener, created);

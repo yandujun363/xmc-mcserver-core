@@ -4,7 +4,7 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * The two custom payload channels XMC uses in the configuration state.
@@ -22,8 +22,8 @@ public final class XmcPayloads {
     private static final String DEFAULT_DATA_CHANNEL = "xmc:data";
     private static final String DEFAULT_PADDING_CHANNEL = "xmc:pad";
 
-    private static volatile Identifier dataChannel = Identifier.parse(DEFAULT_DATA_CHANNEL);
-    private static volatile Identifier paddingChannel = Identifier.parse(DEFAULT_PADDING_CHANNEL);
+    private static volatile ResourceLocation dataChannel = ResourceLocation.parse(DEFAULT_DATA_CHANNEL);
+    private static volatile ResourceLocation paddingChannel = ResourceLocation.parse(DEFAULT_PADDING_CHANNEL);
 
     private static volatile CustomPacketPayload.Type<Data> dataType =
             new CustomPacketPayload.Type<>(dataChannel);
@@ -50,8 +50,8 @@ public final class XmcPayloads {
      * turns a failure here into a disabled XMC instead of a startup crash.
      */
     public static void register(String dataChannelId, String paddingChannelId) {
-        Identifier data = Identifier.parse(dataChannelId);
-        Identifier padding = Identifier.parse(paddingChannelId);
+        ResourceLocation data = ResourceLocation.parse(dataChannelId);
+        ResourceLocation padding = ResourceLocation.parse(paddingChannelId);
         CustomPacketPayload.Type<Data> newDataType = new CustomPacketPayload.Type<>(data);
         CustomPacketPayload.Type<Padding> newPaddingType = new CustomPacketPayload.Type<>(padding);
 
@@ -65,11 +65,11 @@ public final class XmcPayloads {
         paddingType = newPaddingType;
     }
 
-    public static Identifier dataChannel() {
+    public static ResourceLocation dataChannel() {
         return dataChannel;
     }
 
-    public static Identifier paddingChannel() {
+    public static ResourceLocation paddingChannel() {
         return paddingChannel;
     }
 
