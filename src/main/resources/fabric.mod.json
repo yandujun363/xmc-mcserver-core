@@ -3,14 +3,14 @@
 	"id": "xmc-mcserver-core",
 	"version": "${version}",
 	"name": "XMC MC Server Core",
-	"description": "XMC (Minecraft finalmask) server side for Fabric: registers configurable configuration-state channels (default xmc:data / xmc:pad) and relays them to a local Xray instance. Login, authentication, whitelist and bans stay vanilla.",
+	"description": "XMC (Minecraft finalmask) server side for Fabric. Registers two configurable configuration-state channels (default xmc:data / xmc:pad) and forwards the data channel to the configured local TCP endpoint. Login, authentication, whitelist and bans stay vanilla.",
 	"authors": [
 		"yandujun363"
 	],
 	"contact": {
 		"sources": "https://github.com/yandujun363/xmc-mcserver-core"
 	},
-	"license": "MIT",
+	"license": "MPL-2.0",
 	"environment": "server",
 	"entrypoints": {
 		"main": [
