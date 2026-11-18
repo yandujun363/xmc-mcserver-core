@@ -1,0 +1,42 @@
+xmc-mcserver-core
+Copyright (c) 2026 yandujun363
+
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+The repository as a whole is distributed under the Mozilla Public License,
+version 2.0 (see LICENSE), the same license Xray-core uses.
+
+------------------------------------------------------------------------
+Third-party notices
+
+Xray-core — https://github.com/XTLS/Xray-core
+Copyright (c) XTLS and the Xray-core contributors.
+Licensed under the Mozilla Public License, version 2.0.
+
+The XMC startup-padding presets and the padding selection/framing model in
+
+  core/java/xmc/core/padding/PaddingPreset26.java
+  core/java/xmc/core/padding/PaddingSelect.java
+  core/java/xmc/core/padding/PaddingFrames.java
+  core/java/xmc/core/padding/PaddingTurn.java
+  core/java/xmc/core/padding/PaddingVariant.java
+  core/java/xmc/core/padding/PaddingDelayRange.java
+
+are a port of Xray-core's transport/internet/finalmask/xmc (padding.go,
+padding_preset.go, padding_frames_test.go), and the Minecraft framing helpers
+in src/test/java/xmc/core/protocol/ (VarInts.java, FrameCodec.java) follow
+Xray-core's protocol.go and packet_stream.go. Those portions are Covered
+Software under the MPL, v. 2.0, and stay under it.
+
+------------------------------------------------------------------------
+Mixing
+
+MPL-2.0 permits the Covered Software to be included in a Larger Work
+distributed under other terms, provided the obligations for the Covered
+Software above are met (MPL-2.0 §3.3). The original parts of this repository
+— the Fabric integration in lib/, the configuration loading in config/, the
+mod entry point and session relay in core/, and the tests written for Fabric —
+are the work of the copyright holder and are additionally offered under the
+MIT license, so a Larger Work may take them under either license.
