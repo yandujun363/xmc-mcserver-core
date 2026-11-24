@@ -2,6 +2,7 @@ package xmc.core;
 
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
@@ -12,6 +13,9 @@ import xmc.core.session.XmcRuntime;
 import xmc.lib.net.XmcNetworking;
 
 import java.nio.file.Path;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Mod entrypoint.
@@ -29,6 +33,12 @@ import java.nio.file.Path;
  */
 public final class XmcMod implements ModInitializer {
     public static final String MOD_ID = "xmc-mcserver-core";
+
+    /**
+     * A server tick normally arrives every 50 ms; a longer gap means the tick
+     * loop is paused or stalled and the fallback driver has to keep writing.
+     */
+    private static final long TICK_STALL_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
     private static volatile XmcConfig config;
@@ -61,12 +71,45 @@ public final class XmcMod implements ModInitializer {
             }
         }
 
+        startTickDriver();
         ServerLifecycleEvents.SERVER_STARTING.register(XmcMod::start);
         // Properties (online-mode, compression) are only applied after
         // SERVER_STARTING, so the settings check waits for SERVER_STARTED.
         ServerLifecycleEvents.SERVER_STARTED.register(XmcMod::warnAboutServerSettings);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> stop());
         LOGGER.info("XMC MC server core initialized");
+    }
+
+    /**
+     * Drives the per-tick writes.
+     *
+     * <p>The server tick is the real clock, so the tunnel follows the server
+     * when it lags. It is not enough on its own: a paused dedicated server
+     * stops ticking (see {@link XmcRuntime#tickIfStalled(long)}), so a slow
+     * watchdog takes over whenever no tick arrived for a while.
+     *
+     * <p>Registered once, from {@code onInitialize}: {@code Event} has no
+     * unregister, and the runtime a tick belongs to is looked up per call.
+     */
+    private static void startTickDriver() {
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            XmcRuntime current = runtime;
+            if (current != null) {
+                current.tick();
+            }
+        });
+
+        ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(task -> {
+            Thread thread = new Thread(task, "xmc-tick-watchdog");
+            thread.setDaemon(true);
+            return thread;
+        });
+        watchdog.scheduleAtFixedRate(() -> {
+            XmcRuntime current = runtime;
+            if (current != null) {
+                current.tickIfStalled(TICK_STALL_NANOS);
+            }
+        }, 50, 50, TimeUnit.MILLISECONDS);
     }
 
     private static Path configPath() {

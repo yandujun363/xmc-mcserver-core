@@ -19,6 +19,8 @@ public final class XmcRuntime implements XmcChannelHandler {
     private final XmcConfig config;
     private final Map<ServerConfigurationPacketListenerImpl, XmcSession> sessions = new ConcurrentHashMap<>();
 
+    private volatile long lastTickNanos;
+
     private XmcRuntime(XmcConfig config) {
         this.config = config;
     }
@@ -53,6 +55,33 @@ public final class XmcRuntime implements XmcChannelHandler {
         XmcSession session = sessions.remove(listener);
         if (session != null) {
             session.close();
+        }
+    }
+
+    /**
+     * Writes one tick worth of tunnel data for every active session.
+     *
+     * <p>Called from the server tick, so the s2c direction keeps the same 20 Hz
+     * cadence the Xray client produces on the other side.
+     */
+    public void tick() {
+        lastTickNanos = System.nanoTime();
+        for (XmcSession session : sessions.values()) {
+            session.tick();
+        }
+    }
+
+    /**
+     * Tick fallback for a server that is not ticking.
+     *
+     * <p>Vanilla stops the tick loop when an empty dedicated server has been
+     * paused for {@code pause-when-empty-seconds}; the Fabric tick event then
+     * stops firing as well. An XMC connection never enters the play state, so a
+     * proxy-only server looks empty and would otherwise go silent.
+     */
+    public void tickIfStalled(long stallNanos) {
+        if (System.nanoTime() - lastTickNanos >= stallNanos) {
+            tick();
         }
     }
 
