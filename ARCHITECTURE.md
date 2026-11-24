@@ -12,7 +12,7 @@
 **没有 mixin**，不改任何 vanilla 代码路径，配置里没有密码、玩家档案或密钥派生。
 
 通道名来自配置而不是写死在代码里：固定的默认值是链路上可识别的指纹，部署方可以
-同时替换两端的通道名（Xray 侧的支持还在 PR/草案中）。
+同时替换两端的通道名。
 
 ## 连接时序（协议 767）
 
@@ -68,20 +68,27 @@ networking 层对没有 handler 的 channel 返回 `false` 后也交回 vanilla�
 1. 第一条数据通道载荷 → 创建 `XmcSession` 并启动线程；
 2. 线程先发 s2c 启动 padding（`core/padding/PaddingFrames`，每个捕获的 chunk
    拆成不超过 32767 字节的 padding 通道载荷），再连接 `tunnel.host:port`；
-3. socket 读线程把字节切成 `maxPayloadBytes` 的数据通道载荷发给客户端；
-4. 主线程把客户端数据通道载荷写入 socket（先入队，避免阻塞服务器线程）；
-5. `ServerConfigurationConnectionEvents.DISCONNECT` 或任意一端关闭 → 关闭会话。
+3. socket 读线程把字节入队（上限 4 MiB，满了阻塞，形成背压）；
+4. 每个 tick 由 `TickSender` 把队列合并刷给客户端：按 `maxPayloadBytes` 切块，
+   每块一个数据通道载荷，空闲的 tick 补一个 1 字节 padding 载荷；
+5. 主线程把客户端数据通道载荷写入 socket（先入队，避免阻塞服务器线程）；
+6. `ServerConfigurationConnectionEvents.DISCONNECT` 或任意一端关闭 → 关闭会话。
 
 客户端发来的 padding 通道载荷会被 vanilla 丢弃，模组不需要读；客户端自己的
 padding 也不会被消费。所以 padding 的方向、时机完全由发送方决定，两端没有校验
 依赖。
+
+每 tick 一次的节拍来自 `ServerTickEvents.END_SERVER_TICK`，和真实服务器「一个 tick
+发一批包」的形态一致。空服被 vanilla 暂停时该事件不再触发，所以 `XmcMod` 另起一个
+100 ms 看门狗兜底：超过 100 ms 没等到 tick 就照常刷一轮。
 
 ## 字节转发边界
 
 `TunnelConnector` 只做三件事：解析 `tunnel.host`、确认它是私有地址、`Socket.connect`
 并打开 `TCP_NODELAY`。`XmcSession` 两边都是纯字节搬运：
 
-- socket → 客户端：`read(buffer)` 之后按 `maxPayloadBytes` 切块，每块一个数据通道载荷；
+- socket → 客户端：`read(buffer)` 之后入队，每个 tick 合并刷出，按 `maxPayloadBytes`
+  切块，每块一个数据通道载荷；
 - 客户端 → socket：载荷先入队，会话线程 `out.write(data)`，队列空了再 flush。
 
 整条链路没有一处读协议头，没有协议字段，也没有硬编码端口，`tunnel.host:port` 上
