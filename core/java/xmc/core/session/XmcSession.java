@@ -39,6 +39,11 @@ import java.util.function.Consumer;
  *       channel.</li>
  * </ol>
  *
+ * <p>Tunnel bytes read from the socket are queued and written once per tick
+ * (see {@link TickSender}), so the server side keeps the same 20 Hz cadence the
+ * Xray client produces. The queue applies backpressure to the socket instead of
+ * buffering without bound.
+ *
  * <p>The client's own padding arrives on the padding channel and is dropped
  * by vanilla before it reaches the mod, so it is never read here.
  */
@@ -56,6 +61,11 @@ public final class XmcSession {
     private final PaddingFrames.Sleeper sleeper = Thread::sleep;
 
     private volatile Socket tunnel;
+    /**
+     * Set once the tunnel is connected. Every s2c byte goes through it so the
+     * connection keeps one payload batch per tick instead of a bulk stream.
+     */
+    private volatile TickSender sender;
 
     public XmcSession(ServerConfigurationPacketListenerImpl listener,
                       XmcConfig config, String playerName, Consumer<XmcSession> onClose) {
@@ -88,6 +98,11 @@ public final class XmcSession {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
+        TickSender pending = sender;
+        if (pending != null) {
+            // Flush before the socket goes away so the last bytes are not lost.
+            pending.close();
+        }
         Socket socket = tunnel;
         if (socket != null) {
             try {
@@ -115,6 +130,10 @@ public final class XmcSession {
                 socket.close();
                 return;
             }
+            sender = new TickSender(
+                    chunk -> XmcNetworking.sendData(listener, chunk),
+                    pad -> XmcNetworking.sendPadding(listener, pad),
+                    config.maxPayloadBytes());
             XmcMod.LOGGER.info("XMC tunnel established for {}", playerName);
             startTunnelReader(socket);
             forwardInbound(socket);
@@ -125,6 +144,22 @@ public final class XmcSession {
                 XmcMod.LOGGER.warn("XMC session {} failed", playerName, failure);
             }
         } finally {
+            close();
+        }
+    }
+
+    /**
+     * Writes one tick worth of tunnel bytes, called from the server tick.
+     *
+     * <p>Does nothing before the tunnel is established: the startup padding is
+     * time-driven and must not interleave with a data tick.
+     */
+    public void tick() {
+        TickSender current = sender;
+        if (current == null) {
+            return;
+        }
+        if (!current.tick()) {
             close();
         }
     }
@@ -165,11 +200,15 @@ public final class XmcSession {
                 for (int offset = 0; offset < read; offset += config.maxPayloadBytes()) {
                     int count = Math.min(read - offset, config.maxPayloadBytes());
                     byte[] chunk = Arrays.copyOfRange(buffer, offset, offset + count);
-                    if (!XmcNetworking.sendData(listener, chunk)) {
+                    TickSender current = sender;
+                    if (current == null || !current.offer(chunk)) {
                         return;
                     }
                 }
             }
+        } catch (InterruptedException interrupted) {
+            // The session is closing; a blocked queue means the tick stopped.
+            Thread.currentThread().interrupt();
         } catch (IOException failure) {
             if (!closed.get()) {
                 XmcMod.LOGGER.debug("XMC tunnel reader {} ended: {}", playerName, failure.toString());
