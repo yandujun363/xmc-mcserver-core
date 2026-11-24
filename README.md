@@ -81,9 +81,6 @@ Fabric 的 `PayloadTypeRegistry`：字符不合法会抛 `IdentifierException`�
 也就是服务端直接起不来。模组在注册前先做上面的检查；注册仍然失败时只把 XMC
 自身置为不可用并打日志，vanilla 照常启动。
 
-> Xray 侧目前把 `xmc:data` / `xmc:pad` 写在代码里，可配置通道的 PR/草案还在处理
-> 中；在 Xray 端支持之前，只改模组这一侧会连不上。
-
 ## 自行构建与改 id
 
 默认的 `xmc:data` / `xmc:pad` 是公开常量，固定通道名在链路上就是一个可识别的
